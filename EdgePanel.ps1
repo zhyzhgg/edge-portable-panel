@@ -1344,10 +1344,10 @@ function Get-PkgSnapshot([string]$edgeDir) {
         $map[$rel] = [long]$f.Length
         $sum += [long]$f.Length
     }
-    return @{ version = $verName; files = $map; total = $sum }
+    return @{ version = $verName; files = $map; total = $sum; scope = $edgeDir }
 }
 function Save-PkgSnapshot($snap, [string]$path) {
-    [ordered]@{ version = $snap.version; taken_at = (Get-Date).ToString('s'); total_bytes = $snap.total; files = $snap.files } |
+    [ordered]@{ version = $snap.version; scope = $snap.scope; taken_at = (Get-Date).ToString('s'); total_bytes = $snap.total; files = $snap.files } |
         ConvertTo-Json -Depth 4 -Compress | Set-Content -LiteralPath $path -Encoding UTF8
 }
 function Test-StructureDrift([string]$edgeDir) {
@@ -1361,6 +1361,14 @@ function Test-StructureDrift([string]$edgeDir) {
     try { $old = Get-Content -LiteralPath $snapPath -Raw | ConvertFrom-Json } catch { }
     if (-not $old -or -not $old.files) {
         Write-Log '结构基线文件损坏，将在本次更新成功后被重写（本次不比对）' 'warn'
+        return $new
+    }
+    # 基线必须来自「同一个上游包目录」才有可比性：自测夹具、换机、换盘后路径都会变，
+    # 拿旧基线硬比只会刷出一屏假的"结构变化"（实测踩到：基线是 11-21 自测用的 160.0.4408.0 假包）。
+    $oldScope = [string]$old.scope
+    if (-not $oldScope -or ($oldScope -ne $edgeDir)) {
+        $why = if (-not $oldScope) { '旧格式基线没有来源标记' } else { '基线来自 ' + $oldScope }
+        Write-Log ('结构基线不可比对（' + $why + '），已重建（本次不比对）')
         return $new
     }
     $oldFiles = @{}
@@ -2856,6 +2864,33 @@ function Sync-RootProxy([string]$edgeDir) {
     }
 }
 
+function Test-MsSignature([string]$path) {
+    # 判断"是不是微软签过的有效文件"。不单独依赖 Get-AuthenticodeSignature：它靠模块自动加载，
+    # 若本进程的 PSModulePath 里混进了 PowerShell 7 的模块目录（例如从 pwsh 7 会话里启动本面板），
+    # 5.1 会解析到 PS7 版 Microsoft.PowerShell.Security 并加载失败（实测报"找到命令但无法加载该模块"），
+    # 更新预检就会在**下载完 435 MB 之后**中止。这里先试 cmdlet，失败退回纯 .NET 校验。
+    try {
+        $s = Get-AuthenticodeSignature -LiteralPath $path -ErrorAction Stop
+        if ($s -and $s.Status -eq 'Valid' -and $s.SignerCertificate -and ($s.SignerCertificate.Subject -match 'Microsoft')) {
+            return @{ Ok = $true; Why = 'Authenticode Valid（Microsoft）' }
+        }
+        return @{ Ok = $false; Why = ('签名状态 ' + $(if ($s) { [string]$s.Status } else { '空' })) }
+    } catch {
+        try {
+            $cert = [System.Security.Cryptography.X509Certificates.X509Certificate]::CreateFromSignedFile($path)
+            if (-not $cert) { return @{ Ok = $false; Why = '文件没有签名' } }
+            $x = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 $cert
+            $chain = New-Object System.Security.Cryptography.X509Certificates.X509Chain
+            $chain.ChainPolicy.RevocationMode = 'NoCheck'   # 离线也能判，避免取吊销列表卡住
+            $chainOk = $chain.Build($x)
+            if ($chainOk -and ($x.Subject -match 'Microsoft')) { return @{ Ok = $true; Why = ('Microsoft 证书链可信 ' + $x.Thumbprint) } }
+            return @{ Ok = $false; Why = ('证书链 ' + $chainOk + ' / ' + $x.Subject) }
+        } catch {
+            return @{ Ok = $false; Why = ($_.Exception.Message + '（Authenticode 亦不可用）') }
+        }
+    }
+}
+
 function Test-EssentialSet([string]$edgeDir) {
     # 只读检查，返回缺项清单：Required=必需（缺了就起不来） / Feature=功能件（缺了某功能不可用）
     $req = New-Object System.Collections.Generic.List[string]
@@ -3149,12 +3184,11 @@ function Invoke-UpdateNow([bool]$withSlim = $false) {
         }
         $sigTarget = if ($pre.Ver) { Join-Path (Join-Path $extracted.FullName $pre.Ver) 'msedge.exe' } else { Join-Path $extracted.FullName 'msedge.exe' }
         if (-not (Test-Path -LiteralPath $sigTarget)) { $sigTarget = Join-Path $extracted.FullName 'msedge.exe' }
-        $sig = Get-AuthenticodeSignature -LiteralPath $sigTarget
-        $sigOk = ($sig.Status -eq 'Valid') -and $sig.SignerCertificate -and ($sig.SignerCertificate.Subject -match 'Microsoft')
-        if (-not $sigOk) {
-            throw ('新包的 msedge.exe 签名不可信（' + $sig.Status + '），已中止更新；旧版未动')
+        $sigCheck = Test-MsSignature $sigTarget
+        if (-not $sigCheck.Ok) {
+            throw ('新包的 msedge.exe 签名不可信（' + $sigCheck.Why + '），已中止更新；旧版未动')
         }
-        Write-Log ('预检通过：必需 ' + $script:essentialRequired.Count + ' 项齐全，msedge.exe 签名 Valid（' + (Split-Path $sigTarget -Leaf) + '）') 'ok'
+        Write-Log ('预检通过：必需 ' + $script:essentialRequired.Count + ' 项齐全，msedge.exe 签名 ' + $sigCheck.Why + '（' + (Split-Path $sigTarget -Leaf) + '）') 'ok'
         # F9：上游包结构漂移（只在这里跑；本地瘦身目录不参与比对）
         $newSnap = $null
         try { $newSnap = Test-StructureDrift $extracted.FullName } catch { Write-Log ('结构比对失败（不阻断）：' + $_.Exception.Message) 'warn' }
