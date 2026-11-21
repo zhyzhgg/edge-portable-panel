@@ -2818,7 +2818,8 @@ $script:essentialFeature = @(
     '{ver}\Locales\en-US.pak'
     '{ver}\WidevineCdm\_platform_specific\win_x64\widevinecdm.dll'
     '{ver}\EBWebView\x64\EmbeddedBrowserWebView.dll'
-    '{ver}\msedge_proxy.exe'
+    'msedge_proxy.exe'      # 站点应用/PWA 快捷方式指向的是**包根**这一份（Chromium 按运行中 exe 的目录拼出来的）；
+                            # 版本目录里那份是上游自带，缺了不影响使用（2026-11-21 实测：删掉后应用照常打开）
 )
 
 function Resolve-VersionDir([string]$edgeDir) {
@@ -3246,6 +3247,21 @@ if (-not $script:updateBackupOk -and -not $dry) {
             foreach ($f in $staged) { Move-Item -LiteralPath (Join-Path $oldDir $f) -Destination (Join-Path $edgeRoot $f) -Force -ErrorAction SilentlyContinue }
             if (Test-Path -LiteralPath $oldDir) { Remove-Item -LiteralPath $oldDir -Recurse -Force -ErrorAction SilentlyContinue }
             throw ('已回滚到旧版：' + $why)
+        }
+        # 站点应用/PWA 快捷方式指向的是**包根**的 msedge_proxy.exe（Chromium 按"运行中 exe 的目录"拼出来的），
+        # 而上游便携包根上从不提供它 ⇒ 这里必须主动补回，否则用户的 PWA 快捷方式全报「Windows 正在查找
+        # msedge_proxy.exe」。优先用新版本目录里的同名文件（版本对齐），没有再退回刚暂存的旧文件。
+        $rootProxy = Join-Path $edgeRoot 'msedge_proxy.exe'
+        if (-not (Test-Path -LiteralPath $rootProxy)) {
+            $nvProxyDir = Resolve-VersionDir $edgeRoot
+            $srcProxy = if ($nvProxyDir) { Join-Path $nvProxyDir 'msedge_proxy.exe' } else { '' }
+            if ($srcProxy -and (Test-Path -LiteralPath $srcProxy)) {
+                Copy-Item -LiteralPath $srcProxy -Destination $rootProxy -Force
+                Write-Log '已把 msedge_proxy.exe 放到包根（站点应用/PWA 快捷方式靠它启动）' 'ok'
+            } elseif (Test-Path -LiteralPath (Join-Path $oldDir 'msedge_proxy.exe')) {
+                Move-Item -LiteralPath (Join-Path $oldDir 'msedge_proxy.exe') -Destination $rootProxy -Force
+                Write-Log '已把包根的 msedge_proxy.exe 补回（站点应用/PWA 快捷方式靠它启动）' 'ok'
+            }
         }
         Remove-Item -LiteralPath $oldDir -Recurse -Force -ErrorAction SilentlyContinue
         Write-Log '新文件已就位，旧版暂存已清除' 'ok'
