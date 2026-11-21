@@ -48,6 +48,44 @@ $script:panelUpdateRepo = '<owner>/<repo>'
 
 **公开仓库不需要任何令牌**：查 Release、下载资产都是匿名 HTTPS。
 
+## 发布流程（维护者）
+
+发新版按这个顺序走，**第 4 步和第 5 步不要颠倒**，否则会出现「Release 里的 EXE 是新的、仓库源码还是旧的」。
+
+1. **改代码**（`EdgePanel.ps1` 等）；
+2. **提升版本**：`powershell -NoProfile -File .\build.ps1 -Bump`
+   - 只自动改 `build\Host.cs` 的 `ResourceVersion`（解包目录键）；
+   - **`ProductVersion` 与 `EdgePanel.ps1` 顶部的 `$script:panelVersion` 要手动保持一致**，`build.ps1` 编译前会校验，不一致直接报错。
+3. **编译到中立文件名，再改名**（重要）：
+
+```powershell
+.\build.ps1 -Bump -Out 'D:\tmp\ep_build.exe'
+Copy-Item 'D:\tmp\ep_build.exe' '<便携包根>\EdgePanel.exe' -Force
+```
+
+   为什么绕这一下：部分杀软（如火绒）会对「`csc.exe` 直接写出名为 `EdgePanel.exe` 的新 PE」做泛特征拦截并**当场删除**。用中立文件名产出再复制过去就不会触发。
+4. **先推源码**：
+
+```powershell
+git add -A
+git commit -m "feat: ..."
+git push origin main
+```
+
+   若 `git push` 报 `schannel: failed to receive handshake`（部分环境 TLS 受限），加一次性参数：
+
+```powershell
+git -c http.sslBackend=openssl push origin main
+```
+
+5. **再发 Release**：tag 必须与 `$script:panelVersion` 同号（例如 `v1.3.4`），附件固定两个名字：
+
+   - `EdgePanel.exe`（第 3 步的产物）
+   - `SHA256SUMS.txt`（`Get-FileHash .\EdgePanel.exe -Algorithm SHA256` 的结果 + 两空格 + 文件名）
+
+6. **面板端不用改**：它启动 6 秒后静默探测、或点顶栏「更新面板」，发现新 tag 就把按钮变绿并弹窗提示；下载地址按约定拼 `releases/download/<tag>/EdgePanel.exe`，校验 `SHA256SUMS.txt` 后替换自身。
+
+**查版本用的是 `releases/latest` 的 302 重定向**，不消耗 GitHub API 配额（匿名 API 只有 60 次/小时，频繁检查会被 403 限流；只有重定向失败时才退回 API）。
 ## 校验下载的文件
 
 ```powershell
