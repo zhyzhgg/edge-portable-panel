@@ -10,6 +10,11 @@
 $ErrorActionPreference = 'Stop'
 $script:panelVersion = '1.3.3'
 $script:panelUpdateRepo = 'zhyzhgg/edge-portable-panel'   # 自更新源（公开仓库 Releases）
+$script:panelProbePs = $null
+$script:panelProbeHandle = $null
+$script:panelProbeTimer = $null
+$script:panelProbeDelay = $null
+$script:panelProbeDone = $false
 $script:policyKey = $env:EP_POLICY_KEY
 
 # ---------- 引导：脚本目录（EXE 解包目录）与包根（EXE 所在目录）----------
@@ -502,6 +507,9 @@ $form.Add_FormClosing({
     # 打包中的 7zr 是独立进程，Kill 防孤儿继续写 .tmp
     if ($script:backupProc -and -not $script:backupProc.HasExited) { try { $script:backupProc.Kill() } catch { } }
     if ($script:policyWatch) { try { $script:policyWatch.Stop(); $script:policyWatch.Dispose() } catch { } }
+    foreach ($tm in @($script:panelProbeDelay, $script:panelProbeTimer)) { if ($tm) { try { $tm.Stop(); $tm.Dispose() } catch { } } }
+    $script:panelProbeDelay = $null; $script:panelProbeTimer = $null
+    if ($script:panelProbePs) { try { [void]$script:panelProbePs.BeginStop($null, $null) } catch { }; try { $script:panelProbePs.Dispose() } catch { }; $script:panelProbePs = $null }
 })
 
 $header = New-Object System.Windows.Forms.Panel
@@ -3349,6 +3357,120 @@ try {
     if (Test-Path -LiteralPath $staleUpdCmd) { Remove-Item -LiteralPath $staleUpdCmd -Force -ErrorAction SilentlyContinue }
 } catch { }
 
+function Get-PanelLatestTagRedirect {
+    # 用 releases/latest 的 302 重定向拿最新 tag：**不消耗 GitHub API 配额**（匿名 API 只有 60 次/小时，
+    # 频繁检查会被 403 限流）。返回形如 '1.3.4' 的字符串；失败返回 ''。
+    if ([string]::IsNullOrWhiteSpace($script:panelUpdateRepo)) { return '' }
+    $repoSlug = $script:panelUpdateRepo.Trim('/')
+    $page = 'https://github.com/' + $repoSlug + '/releases/latest'
+    foreach ($u in @($page, ('https://gh-proxy.org/' + $page), ('https://ghfast.top/' + $page))) {
+        try {
+            $req = [System.Net.HttpWebRequest]::Create($u)
+            $req.UserAgent = 'EdgePanel/' + $script:panelVersion
+            $req.AllowAutoRedirect = $false
+            $req.Timeout = 8000
+            $req.ReadWriteTimeout = 8000
+            $resp = $null
+            try { $resp = $req.GetResponse() } catch { $resp = $_.Exception.Response }
+            if (-not $resp) { continue }
+            $loc = [string]$resp.Headers['Location']
+            try { $resp.Close() } catch { }
+            if (-not $loc) { continue }
+            $m = [regex]::Match($loc, '/tag/(v?[0-9][0-9A-Za-z\.\-_]*)$')
+            if ($m.Success) { return ([string]$m.Groups[1].Value).TrimStart('v', 'V') }
+        } catch { }
+    }
+    return ''
+}
+
+function Start-PanelUpdateProbe {
+    # 启动后静默探测面板自身有没有新版：后台 runspace 发请求，UI 线程只轮询结果；
+    # 查到新版才变绿 + 弹一次窗（默认「否」，绝不自动替换 EXE）。
+    if ($script:panelProbeDone) { return }
+    if ($script:closeRequested -or $form.IsDisposed) { return }
+    if ([string]::IsNullOrWhiteSpace($script:panelUpdateRepo)) { return }
+    if ($env:EP_NO_PANEL_PROBE -eq '1' -or $env:EP_NO_PROMPT -eq '1') { return }
+    $script:panelProbeDone = $true
+    $repoSlug = $script:panelUpdateRepo.Trim('/')
+    $page = 'https://github.com/' + $repoSlug + '/releases/latest'
+    $api = 'https://api.github.com/repos/' + $repoSlug + '/releases/latest'
+    $probe = @'
+param([string]$Page, [string]$Api)
+[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+# ① 优先走 releases/latest 的 302：零 API 配额，不会被限流
+foreach ($u in @($Page, ('https://gh-proxy.org/' + $Page), ('https://ghfast.top/' + $Page))) {
+    try {
+        $req = [System.Net.HttpWebRequest]::Create($u)
+        $req.UserAgent = 'EdgePanel-Probe'
+        $req.AllowAutoRedirect = $false
+        $req.Timeout = 8000
+        $resp = $null
+        try { $resp = $req.GetResponse() } catch { $resp = $_.Exception.Response }
+        if ($resp) {
+            $loc = [string]$resp.Headers['Location']
+            try { $resp.Close() } catch { }
+            $m = [regex]::Match([string]$loc, '/tag/(v?[0-9][0-9A-Za-z\.\-_]*)$')
+            if ($m.Success) { return ('OK|' + $m.Groups[1].Value) }
+        }
+    } catch { }
+}
+# ② 重定向拿不到再退回 API（可能被匿名限流 60 次/小时）
+foreach ($u in @($Api, ('https://gh-proxy.org/' + $Api), ('https://ghfast.top/' + $Api))) {
+    try {
+        $req = [System.Net.HttpWebRequest]::Create($u)
+        $req.UserAgent = 'EdgePanel-Probe'
+        $req.Timeout = 8000
+        $resp = $req.GetResponse()
+        $sr = New-Object System.IO.StreamReader($resp.GetResponseStream(), [System.Text.Encoding]::UTF8)
+        $txt = $sr.ReadToEnd()
+        $sr.Dispose(); $resp.Close()
+        $o = $txt | ConvertFrom-Json
+        if ($o.tag_name) { return ('OK|' + [string]$o.tag_name) }
+    } catch { }
+}
+return ('ERR|')
+'@
+    try {
+        $ps = [powershell]::Create()
+        [void]$ps.AddScript($probe).AddArgument($page).AddArgument($api)
+        $script:panelProbePs = $ps
+        $script:panelProbeHandle = $ps.BeginInvoke()
+    } catch {
+        Write-Log ('面板更新静默探测未能启动：' + $_.Exception.Message) 'warn'
+        return
+    }
+    Write-Log '正在后台检查面板更新（不影响使用）…'
+    $script:panelProbeTimer = New-Object System.Windows.Forms.Timer
+    $script:panelProbeTimer.Interval = 500
+    $script:panelProbeTimer.Add_Tick({
+        if ($script:closeRequested -or $form.IsDisposed) {
+            if ($script:panelProbeTimer) { try { $script:panelProbeTimer.Stop(); $script:panelProbeTimer.Dispose() } catch { }; $script:panelProbeTimer = $null }
+            return
+        }
+        if (-not $script:panelProbeHandle -or -not $script:panelProbeHandle.IsCompleted) { return }
+        try { $script:panelProbeTimer.Stop(); $script:panelProbeTimer.Dispose() } catch { }
+        $script:panelProbeTimer = $null
+        $raw = ''
+        try { $raw = [string](@($script:panelProbePs.EndInvoke($script:panelProbeHandle)) | Where-Object { $_ } | Select-Object -Last 1) } catch { }
+        try { $script:panelProbePs.Dispose() } catch { }
+        $script:panelProbePs = $null
+        $script:panelProbeHandle = $null
+        if ($raw -notlike 'OK|*') { Write-Log '面板更新静默检查未取得版本信息（网络或限流），下次启动再试' 'warn'; return }
+        $tagText = ([string]($raw.Substring(3))).Trim().TrimStart('v', 'V')
+        $curV = $null; $newV = $null
+        if (-not ([version]::TryParse($script:panelVersion, [ref]$curV) -and [version]::TryParse($tagText, [ref]$newV))) { return }
+        if ($newV -le $curV) { return }
+        Set-PanelUpdateHighlight $true
+        Write-Log ('静默探测：面板有新版本 v' + $script:panelVersion + ' → v' + $tagText) 'warn'
+        if ($script:isBusy) { return }
+        $ansP = [System.Windows.Forms.MessageBox]::Show(
+            ("发现面板新版本：v" + $script:panelVersion + " → v" + $tagText + "`r`n`r`n现在更新吗？（走镜像下载并校验 SHA256，更新后面板会自己重启）`r`n`r`n选「否」也没关系，顶栏按钮会保持绿色，随时可点。"),
+            '面板有新版本', 'YesNo', 'Question', 'Button2')
+        if ($ansP -eq 'Yes') { Invoke-PanelUpdate }
+    })
+    $script:panelProbeTimer.Start()
+}
+
 function Invoke-PanelUpdate {
     if ([string]::IsNullOrWhiteSpace($script:panelUpdateRepo)) {
         Write-Log '面板更新源尚未配置：GitHub 仓库上线后，在 EdgePanel.ps1 顶部填入 $script:panelUpdateRepo = ''用户名/仓库名'' 即可启用镜像检查与更新。' 'warn'
@@ -3374,9 +3496,19 @@ function Invoke-PanelUpdate {
                 if ($rel -and $rel.tag_name) { break }
             } catch { $apiErr = $_.Exception.Message }
         }
-        if (-not $rel -or -not $rel.tag_name) { throw ('无法连接 GitHub Release API（' + $apiErr + '）') }
-
-        $tagVerText = ([string]$rel.tag_name).TrimStart('v', 'V')
+        $tagVerText = ''
+        $exeAsset = $null
+        $shaAsset = $null
+        if ($rel -and $rel.tag_name) {
+            $tagVerText = ([string]$rel.tag_name).TrimStart('v', 'V')
+            $exeAsset = @($rel.assets | Where-Object { $_.name -like '*.exe' }) | Select-Object -First 1
+            $shaAsset = @($rel.assets | Where-Object { $_.name -match '(?i)sha256' }) | Select-Object -First 1
+        } else {
+            # API 可能被匿名限流（60 次/小时）：改走 releases/latest 的 302，零配额
+            $tagVerText = Get-PanelLatestTagRedirect
+            if (-not $tagVerText) { throw ('无法连接 GitHub（API：' + $apiErr + '）') }
+            Write-Log ('Release API 不可用（' + $apiErr + '），已改用 releases/latest 重定向取得版本：v' + $tagVerText) 'warn'
+        }
         $curV = $null; $newV = $null
         if (-not ([version]::TryParse($script:panelVersion, [ref]$curV) -and [version]::TryParse($tagVerText, [ref]$newV))) {
             Write-Log ('无法解析线上版本号：' + $rel.tag_name) 'warn'
@@ -3389,11 +3521,13 @@ function Invoke-PanelUpdate {
             return
         }
 
-        $exeAsset = @($rel.assets | Where-Object { $_.name -like '*.exe' }) | Select-Object -First 1
-        $shaAsset = @($rel.assets | Where-Object { $_.name -match '(?i)sha256' }) | Select-Object -First 1
-        if (-not $exeAsset) { Write-Log '线上 Release 未找到 EXE 附件' 'err'; return }
-
-        $panelLatestInfo = @{ Version = $tagVerText; ExeUrl = [string]$exeAsset.browser_download_url; ShaUrl = $(if ($shaAsset) { [string]$shaAsset.browser_download_url } else { '' }) }
+        if (-not $exeAsset) {
+            # 约定式地址：Release 附件名固定为 EdgePanel.exe / SHA256SUMS.txt
+            $dlBase = 'https://github.com/' + $script:panelUpdateRepo.Trim('/') + '/releases/download/' + $tagVerText
+            $panelLatestInfo = @{ Version = $tagVerText; ExeUrl = ($dlBase + '/EdgePanel.exe'); ShaUrl = ($dlBase + '/SHA256SUMS.txt') }
+        } else {
+            $panelLatestInfo = @{ Version = $tagVerText; ExeUrl = [string]$exeAsset.browser_download_url; ShaUrl = $(if ($shaAsset) { [string]$shaAsset.browser_download_url } else { '' }) }
+        }
         Set-PanelUpdateHighlight $true
         Write-Log ('发现面板新版本：v' + $script:panelVersion + ' → v' + $tagVerText) 'warn'
         if ($RunOnce) { return }
@@ -3557,6 +3691,17 @@ Write-Log ('面板已启动；包根：' + $pkgRoot)
             $form.Opacity = 1
             $script:pendingAutoCheck = $true
             Update-StatusAsync
+            # 启动 6 秒后静默探测面板自身更新（避开启动时的状态刷新与 Edge 版本查询，不抢带宽）
+            try {
+                $script:panelProbeDelay = New-Object System.Windows.Forms.Timer
+                $script:panelProbeDelay.Interval = 6000
+                $script:panelProbeDelay.Add_Tick({
+                    try { $script:panelProbeDelay.Stop(); $script:panelProbeDelay.Dispose() } catch { }
+                    $script:panelProbeDelay = $null
+                    Start-PanelUpdateProbe
+                })
+                $script:panelProbeDelay.Start()
+            } catch { }
         }
         if ($RunOnce) {
             Write-Log ('自测模式：' + $RunOnce)
