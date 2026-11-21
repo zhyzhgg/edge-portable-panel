@@ -1,0 +1,664 @@
+[
+  {
+    "type": "DWORD",
+    "name": "AADWebSiteSSOUsingThisProfileEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "AADWebSSOAllowed",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "AccessibilityImageLabelsEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "AddressBarTrendingSuggestEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "AddressBarWorkSearchResultsEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "AdsTransparencyEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "AIGenThemesEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "AllowBrowsingWithCopilot",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "AlternateErrorPagesEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "ApplicationBoundEncryptionEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "ApplicationGuardFavoritesSyncEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "ApplicationGuardTrafficIdentificationEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "AskBeforeCloseEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "AutofillMembershipsEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "AutoImportAtFirstRun",
+    "value": 4
+  },
+  {
+    "type": "DWORD",
+    "name": "BackgroundModeEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "BingAdsSuppression",
+    "value": 1
+  },
+  {
+    "type": "DWORD",
+    "name": "BlockThirdPartyCookies",
+    "value": 1
+  },
+  {
+    "type": "DWORD",
+    "name": "BrowserNetworkTimeQueriesEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "BuiltInAIAPIsEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "BuiltInDnsClientEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "ClearCachedImagesAndFilesOnExit",
+    "value": 1
+  },
+  {
+    "type": "DWORD",
+    "name": "ComposeInlineEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "ConfigureDoNotTrack",
+    "value": 1
+  },
+  {
+    "type": "DWORD",
+    "name": "ConfigureOnlineTextToSpeech",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "ConfigureOnPremisesAccountAutoSignIn",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "ConfigureShare",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "CopilotAddressBarSuggestionsEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "CopilotMode",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "CopilotMultitabEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "CopilotNewTabPageEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "CopilotPageContext",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "CopilotPageContextEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "DefaultBrowserSettingEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "DefaultBrowserSettingsCampaignEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "DefaultIdleDetectionSetting",
+    "value": 2
+  },
+  {
+    "type": "DWORD",
+    "name": "DefaultShareAdditionalOSRegionSetting",
+    "value": 2
+  },
+  {
+    "type": "DWORD",
+    "name": "DiagnosticData",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "DisableScreenshots",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "Edge3PSerpTelemetryEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "EdgeAdminCenterEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "EdgeAssetDeliveryServiceEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "EdgeAutofillMlEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "EdgeEDropEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "EdgeEntraCopilotPageContext",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "EdgeEntraCopilotPageContextIncludesHistory",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "EdgeHistoryAISearchEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "EdgeManagementEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "EdgeShoppingAssistantEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "EdgeWorkspacesEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "EfficiencyModeEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "EnhanceSecurityMode",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "ExtensionManifestV2Availability",
+    "value": 2
+  },
+  {
+    "type": "DWORD",
+    "name": "ExtensionsPerformanceDetectorEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "GenAILocalFoundationalModelSettings",
+    "value": 1
+  },
+  {
+    "type": "DWORD",
+    "name": "GuidedSwitchEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "HardwareAccelerationModeEnabled",
+    "value": 1
+  },
+  {
+    "type": "DWORD",
+    "name": "HideFirstRunExperience",
+    "value": 1
+  },
+  {
+    "type": "DWORD",
+    "name": "HighEfficiencyModeEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "HubsSidebarEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "ImplicitSignInEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "ImportBrowserSettings",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "ImportOnEachLaunch",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "InAppSupportEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "LiveCaptionsAllowed",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "LocalBrowserDataShareEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "M365LinksAutoOpenCopilotEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "MAMEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "Microsoft365CopilotChatIconEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "MicrosoftEdgeInsiderPromotionEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "MicrosoftEditorProofingEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "MicrosoftEditorSynonymsEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "MSAWebSiteSSOUsingThisProfileAllowed",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "NetworkPredictionOptions",
+    "value": 2
+  },
+  {
+    "type": "DWORD",
+    "name": "NewTabPageAppLauncherEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "NewTabPageBingChatEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "NewTabPageContentEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "NewTabPageQuickLinksEnabled",
+    "value": 0
+  },
+  {
+    "type": "STRING",
+    "name": "NewTabPageSearchBox",
+    "value": "redirect"
+  },
+  {
+    "type": "DWORD",
+    "name": "PasswordDismissCompromisedAlertEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "PasswordGeneratorEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "PasswordManagerEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "PasswordMonitorAllowed",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "PasswordProtectionWarningTrigger",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "PaymentMethodQueryEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "PersonalizationReportingEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "PersonalizeTopSitesInCustomizeSidebarEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "PinBrowserEssentialsToolbarButton",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "PinningWizardAllowed",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "ProactiveAuthWorkflowEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "QuickViewOfficeFilesEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "ReadAloudEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "RemoteDebuggingAllowed",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "ResolveNavigationErrorsUseWebService",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "RoamingProfileSupportEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "ScarewareBlockerProtectionEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "ScreenCaptureAllowed",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "SeamlessWebToBrowserSignInEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "SearchbarAllowed",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "SearchbarIsEnabledOnStartup",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "SearchFiltersEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "SearchForImageEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "SearchInSidebarEnabled",
+    "value": 2
+  },
+  {
+    "type": "DWORD",
+    "name": "ShareBrowsingHistoryWithCopilotSearchAllowed",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "SharedLinksEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "ShowAcrobatSubscriptionButton",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "ShowHomeButton",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "ShowMicrosoftRewards",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "ShowPDFDefaultRecommendationsEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "ShowRecommendationsEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "SleepingTabsEnabled",
+    "value": 1
+  },
+  {
+    "type": "DWORD",
+    "name": "SleepingTabsTimeout",
+    "value": 900
+  },
+  {
+    "type": "DWORD",
+    "name": "SmartScreenDnsRequestsEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "SpeechRecognitionEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "SpellcheckEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "SplitScreenEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "SpotlightExperiencesAndRecommendationsEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "StandaloneHubsSidebarEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "StartupBoostEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "TabServicesEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "TextPredictionEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "TrackingPrevention",
+    "value": 2
+  },
+  {
+    "type": "DWORD",
+    "name": "TyposquattingCheckerEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "UploadFromPhoneEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "UrlDiagnosticDataEnabled",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "UserFeedbackAllowed",
+    "value": 0
+  },
+  {
+    "type": "DWORD",
+    "name": "VisualSearchEnabled",
+    "value": 0
+  },
+  {
+    "type": "STRING",
+    "name": "WebRtcLocalhostIpHandling",
+    "value": "disable_non_proxied_udp"
+  },
+  {
+    "type": "DWORD",
+    "name": "WhatsNewPageForEntraProfilesEnabled",
+    "value": 0
+  },
+  {
+    "type": "STRING",
+    "name": "1",
+    "sub": "CookiesAllowedForUrls",
+    "value": "[*.]google.com"
+  },
+  {
+    "type": "STRING",
+    "name": "1",
+    "sub": "URLBlocklist",
+    "value": "ntp.msn.com"
+  },
+  {
+    "type": "DWORD",
+    "name": "NewTabPageAllowedBackgroundTypes",
+    "value": 3
+  }
+]

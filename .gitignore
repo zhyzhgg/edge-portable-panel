@@ -1,0 +1,14 @@
+# 编译产物与运行日志
+*.exe
+*.pdb
+*.log
+
+# 7-Zip 打包器（自行放入，不随仓库分发）
+tools/7zr.exe
+
+# 策略 GUI 的运行时缓存（下载的上游脚本与译文）
+zh-debloater/work/
+
+# 临时文件
+*.tmp
+_*.png
