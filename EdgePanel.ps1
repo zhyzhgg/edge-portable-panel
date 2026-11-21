@@ -2581,6 +2581,9 @@ function Invoke-RestoreBackup([switch]$Auto) {
             Write-Log '恢复[6/7] 正在改名切换 Edge 本体…'
             if (Test-Path -LiteralPath $edgeRoot) { Move-DirWithRetry $edgeRoot $oldEdge; $movedEdge = $true }
             Move-DirWithRetry $tmpEdge $edgeRoot
+            # 完整备份是整个 Edge\ 目录：如果备份早于 2026-11-21（那时包根还没有 proxy），恢复会把
+            # PWA 快捷方式的目标一起换掉 ⇒ 这里立刻补齐（有就什么都不做）
+            try { [void](Sync-RootProxy $edgeRoot) } catch { }
             Write-Log ('已用完整包里的 Edge 本体替换（旧本体在 ' + (Split-Path $oldEdge -Leaf) + '，确认正常后可手动删）') 'warn'
         }
 
@@ -2833,6 +2836,26 @@ function Resolve-VersionDir([string]$edgeDir) {
     return $null
 }
 
+function Sync-RootProxy([string]$edgeDir) {
+    # 站点应用/PWA 快捷方式指向**包根**的 msedge_proxy.exe（Chromium 按运行中 exe 的目录拼出来的），
+    # 而上游便携包根从不提供它 ⇒ 根上缺、版本目录有，就从版本目录补一份到根（版本对齐）。
+    # 返回是否真的补了（调用方不用管日志）。
+    $rootProxy = Join-Path $edgeDir 'msedge_proxy.exe'
+    if (Test-Path -LiteralPath $rootProxy) { return $false }
+    $vd = Resolve-VersionDir $edgeDir
+    if (-not $vd) { return $false }
+    $src = Join-Path $vd 'msedge_proxy.exe'
+    if (-not (Test-Path -LiteralPath $src)) { return $false }
+    try {
+        Copy-Item -LiteralPath $src -Destination $rootProxy -Force -ErrorAction Stop
+        Write-Log '已把 msedge_proxy.exe 放到包根（站点应用/PWA 快捷方式靠它启动）' 'ok'
+        return $true
+    } catch {
+        Write-Log ('包根 msedge_proxy.exe 补齐失败（不影响其它功能）：' + $_.Exception.Message) 'warn'
+        return $false
+    }
+}
+
 function Test-EssentialSet([string]$edgeDir) {
     # 只读检查，返回缺项清单：Required=必需（缺了就起不来） / Feature=功能件（缺了某功能不可用）
     $req = New-Object System.Collections.Generic.List[string]
@@ -2845,6 +2868,13 @@ function Test-EssentialSet([string]$edgeDir) {
     }
     if ($verName) {
         foreach ($t in $script:essentialFeature) {
+            if ($t -eq 'msedge_proxy.exe') {
+                # 快捷方式认包根那份，而上游新包只带 {ver} 那份（更新预检就是在解压出来的上游包上跑）
+                # ⇒ 两处有一处即算齐，否则每次更新都会误报"新包功能件缺 1 项"。
+                $okProxy = (Test-Path -LiteralPath (Join-Path $edgeDir 'msedge_proxy.exe')) -or (Test-Path -LiteralPath (Join-Path $edgeDir ($verName + '\msedge_proxy.exe')))
+                if (-not $okProxy) { $feat.Add('msedge_proxy.exe（包根与版本目录都缺）') }
+                continue
+            }
             $rel = $t -replace '\{ver\}', $verName
             if (-not (Test-Path -LiteralPath (Join-Path $edgeDir $rel))) { $feat.Add($rel) }
         }
@@ -3235,6 +3265,17 @@ if (-not $script:updateBackupOk -and -not $dry) {
                     Copy-Item -LiteralPath $_.FullName -Destination $dest -Force
                 }
             }
+            # 包根 proxy：PWA/站点应用快捷方式指向它，而上游包根从不提供。必须在下面的复核之前补，
+            # 否则复核会先报"功能件缺失"、紧接着又被补回来，日志自相矛盾。
+            try {
+                if (-not (Sync-RootProxy $edgeRoot)) {
+                    $stagedProxy = Join-Path $oldDir 'msedge_proxy.exe'
+                    if ((Test-Path -LiteralPath $stagedProxy) -and -not (Test-Path -LiteralPath (Join-Path $edgeRoot 'msedge_proxy.exe'))) {
+                        Move-Item -LiteralPath $stagedProxy -Destination (Join-Path $edgeRoot 'msedge_proxy.exe') -Force
+                        Write-Log '已把包根的 msedge_proxy.exe 补回（站点应用/PWA 快捷方式靠它启动）' 'ok'
+                    }
+                }
+            } catch { Write-Log ('包根 proxy 补回失败（不影响更新）：' + $_.Exception.Message) 'warn' }
             # 拷完先复核必需文件，缺了同样回滚（不等到用户下次启动才发现）
             $mid = Test-EssentialSet $edgeRoot
             if ($mid.Required.Count -gt 0) { throw ('拷贝后仍缺必需文件：' + ($mid.Required -join '、')) }
@@ -3247,21 +3288,6 @@ if (-not $script:updateBackupOk -and -not $dry) {
             foreach ($f in $staged) { Move-Item -LiteralPath (Join-Path $oldDir $f) -Destination (Join-Path $edgeRoot $f) -Force -ErrorAction SilentlyContinue }
             if (Test-Path -LiteralPath $oldDir) { Remove-Item -LiteralPath $oldDir -Recurse -Force -ErrorAction SilentlyContinue }
             throw ('已回滚到旧版：' + $why)
-        }
-        # 站点应用/PWA 快捷方式指向的是**包根**的 msedge_proxy.exe（Chromium 按"运行中 exe 的目录"拼出来的），
-        # 而上游便携包根上从不提供它 ⇒ 这里必须主动补回，否则用户的 PWA 快捷方式全报「Windows 正在查找
-        # msedge_proxy.exe」。优先用新版本目录里的同名文件（版本对齐），没有再退回刚暂存的旧文件。
-        $rootProxy = Join-Path $edgeRoot 'msedge_proxy.exe'
-        if (-not (Test-Path -LiteralPath $rootProxy)) {
-            $nvProxyDir = Resolve-VersionDir $edgeRoot
-            $srcProxy = if ($nvProxyDir) { Join-Path $nvProxyDir 'msedge_proxy.exe' } else { '' }
-            if ($srcProxy -and (Test-Path -LiteralPath $srcProxy)) {
-                Copy-Item -LiteralPath $srcProxy -Destination $rootProxy -Force
-                Write-Log '已把 msedge_proxy.exe 放到包根（站点应用/PWA 快捷方式靠它启动）' 'ok'
-            } elseif (Test-Path -LiteralPath (Join-Path $oldDir 'msedge_proxy.exe')) {
-                Move-Item -LiteralPath (Join-Path $oldDir 'msedge_proxy.exe') -Destination $rootProxy -Force
-                Write-Log '已把包根的 msedge_proxy.exe 补回（站点应用/PWA 快捷方式靠它启动）' 'ok'
-            }
         }
         Remove-Item -LiteralPath $oldDir -Recurse -Force -ErrorAction SilentlyContinue
         Write-Log '新文件已就位，旧版暂存已清除' 'ok'
