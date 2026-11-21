@@ -12,7 +12,7 @@ using System.Text.RegularExpressions;
 internal static class Host
 {
     // 资源版本号：内容变了就改这里，触发重新解包
-    private const string ResourceVersion = "2026-11-21.185";   // 解包目录键（每次改内容 -Bump）
+    private const string ResourceVersion = "2026-11-21.187";   // 解包目录键（每次改内容 -Bump）
     private const string ProductVersion = "v1.3.3";   // 必须与 EdgePanel.ps1 的 $script:panelVersion 一致（build.ps1 自动校验）
     private const string FallbackFolderName = "EdgePanel";
 
@@ -74,6 +74,8 @@ internal static class Host
 
         Environment.SetEnvironmentVariable("EP_APPDIR", baseDir);
         Environment.SetEnvironmentVariable("EP_EXEDIR", exeDir);
+    // 面板自更新需要知道"当前正在运行的 EXE 是哪一份"（用户可能把它改名成 EdgePanel.exe）
+    try { Environment.SetEnvironmentVariable("EP_EXEPATH", System.Reflection.Assembly.GetExecutingAssembly().Location); } catch { }
         Environment.SetEnvironmentVariable("EP_RUNTIME", _runtimeRoot);
         Environment.SetEnvironmentVariable("EP_ARGS", string.Join(" ", args));
 

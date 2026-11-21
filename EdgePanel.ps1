@@ -510,6 +510,7 @@ $form.Add_FormClosing({
     foreach ($tm in @($script:panelProbeDelay, $script:panelProbeTimer)) { if ($tm) { try { $tm.Stop(); $tm.Dispose() } catch { } } }
     $script:panelProbeDelay = $null; $script:panelProbeTimer = $null
     if ($script:panelProbePs) { try { [void]$script:panelProbePs.BeginStop($null, $null) } catch { }; try { $script:panelProbePs.Dispose() } catch { }; $script:panelProbePs = $null }
+    if ($script:panelProbeRs) { try { $script:panelProbeRs.Dispose() } catch { }; $script:panelProbeRs = $null }
 })
 
 $header = New-Object System.Windows.Forms.Panel
@@ -3377,7 +3378,7 @@ function Get-PanelLatestTagRedirect {
             try { $resp.Close() } catch { }
             if (-not $loc) { continue }
             $m = [regex]::Match($loc, '/tag/(v?[0-9][0-9A-Za-z\.\-_]*)$')
-            if ($m.Success) { return ([string]$m.Groups[1].Value).TrimStart('v', 'V') }
+            if ($m.Success) { return [string]$m.Groups[1].Value }   # 保留原始 tag（含 v），拼下载地址要用原名
         } catch { }
     }
     return ''
@@ -3420,6 +3421,7 @@ foreach ($u in @($Api, ('https://gh-proxy.org/' + $Api), ('https://ghfast.top/' 
         $req = [System.Net.HttpWebRequest]::Create($u)
         $req.UserAgent = 'EdgePanel-Probe'
         $req.Timeout = 8000
+        $req.ReadWriteTimeout = 8000
         $resp = $req.GetResponse()
         $sr = New-Object System.IO.StreamReader($resp.GetResponseStream(), [System.Text.Encoding]::UTF8)
         $txt = $sr.ReadToEnd()
@@ -3431,12 +3433,19 @@ foreach ($u in @($Api, ('https://gh-proxy.org/' + $Api), ('https://ghfast.top/' 
 return ('ERR|')
 '@
     try {
+        $rs = [runspacefactory]::CreateRunspace()
+        $rs.Open()
         $ps = [powershell]::Create()
+        $ps.Runspace = $rs
         [void]$ps.AddScript($probe).AddArgument($page).AddArgument($api)
+        $script:panelProbeRs = $rs
         $script:panelProbePs = $ps
         $script:panelProbeHandle = $ps.BeginInvoke()
     } catch {
         Write-Log ('面板更新静默探测未能启动：' + $_.Exception.Message) 'warn'
+        try { if ($ps) { $ps.Dispose() } } catch { }
+        try { if ($rs) { $rs.Dispose() } } catch { }
+        $script:panelProbePs = $null; $script:panelProbeRs = $null; $script:panelProbeHandle = $null
         return
     }
     Write-Log '正在后台检查面板更新（不影响使用）…'
@@ -3453,7 +3462,9 @@ return ('ERR|')
         $raw = ''
         try { $raw = [string](@($script:panelProbePs.EndInvoke($script:panelProbeHandle)) | Where-Object { $_ } | Select-Object -Last 1) } catch { }
         try { $script:panelProbePs.Dispose() } catch { }
+        try { $script:panelProbeRs.Dispose() } catch { }
         $script:panelProbePs = $null
+        $script:panelProbeRs = $null
         $script:panelProbeHandle = $null
         if ($raw -notlike 'OK|*') { Write-Log '面板更新静默检查未取得版本信息（网络或限流），下次启动再试' 'warn'; return }
         $tagText = ([string]($raw.Substring(3))).Trim().TrimStart('v', 'V')
@@ -3463,15 +3474,16 @@ return ('ERR|')
         Set-PanelUpdateHighlight $true
         Write-Log ('静默探测：面板有新版本 v' + $script:panelVersion + ' → v' + $tagText) 'warn'
         if ($script:isBusy) { return }
+        if ($RunOnce) { return }
         $ansP = [System.Windows.Forms.MessageBox]::Show(
             ("发现面板新版本：v" + $script:panelVersion + " → v" + $tagText + "`r`n`r`n现在更新吗？（走镜像下载并校验 SHA256，更新后面板会自己重启）`r`n`r`n选「否」也没关系，顶栏按钮会保持绿色，随时可点。"),
             '面板有新版本', 'YesNo', 'Question', 'Button2')
-        if ($ansP -eq 'Yes') { Invoke-PanelUpdate }
+        if ($ansP -eq 'Yes') { Invoke-PanelUpdate -SkipConfirm }
     })
     $script:panelProbeTimer.Start()
 }
 
-function Invoke-PanelUpdate {
+function Invoke-PanelUpdate([switch]$SkipConfirm) {
     if ([string]::IsNullOrWhiteSpace($script:panelUpdateRepo)) {
         Write-Log '面板更新源尚未配置：GitHub 仓库上线后，在 EdgePanel.ps1 顶部填入 $script:panelUpdateRepo = ''用户名/仓库名'' 即可启用镜像检查与更新。' 'warn'
         return
@@ -3496,22 +3508,26 @@ function Invoke-PanelUpdate {
                 if ($rel -and $rel.tag_name) { break }
             } catch { $apiErr = $_.Exception.Message }
         }
+        $rawTag = ''
         $tagVerText = ''
         $exeAsset = $null
         $shaAsset = $null
         if ($rel -and $rel.tag_name) {
-            $tagVerText = ([string]$rel.tag_name).TrimStart('v', 'V')
+            $rawTag = [string]$rel.tag_name
             $exeAsset = @($rel.assets | Where-Object { $_.name -like '*.exe' }) | Select-Object -First 1
             $shaAsset = @($rel.assets | Where-Object { $_.name -match '(?i)sha256' }) | Select-Object -First 1
         } else {
             # API 可能被匿名限流（60 次/小时）：改走 releases/latest 的 302，零配额
-            $tagVerText = Get-PanelLatestTagRedirect
-            if (-not $tagVerText) { throw ('无法连接 GitHub（API：' + $apiErr + '）') }
-            Write-Log ('Release API 不可用（' + $apiErr + '），已改用 releases/latest 重定向取得版本：v' + $tagVerText) 'warn'
+            $rawTag = Get-PanelLatestTagRedirect
+            if (-not $rawTag) { throw ('无法连接 GitHub（API：' + $apiErr + '）') }
+            Write-Log ('Release API 不可用（' + $apiErr + '），已改用 releases/latest 重定向取得版本：' + $rawTag) 'warn'
         }
+        # 比较用去掉 v 的版本号；拼下载地址必须用**原始 tag**（我们的 Release tag 形如 v1.3.4）
+        $tagVerText = ([string]$rawTag).TrimStart('v', 'V')
         $curV = $null; $newV = $null
         if (-not ([version]::TryParse($script:panelVersion, [ref]$curV) -and [version]::TryParse($tagVerText, [ref]$newV))) {
-            Write-Log ('无法解析线上版本号：' + $rel.tag_name) 'warn'
+            $tagForLog = if ($rawTag) { $rawTag } else { '(空)' }
+            Write-Log ('无法解析线上版本号：' + $tagForLog) 'warn'
             Set-PanelUpdateHighlight $false
             return
         }
@@ -3523,7 +3539,7 @@ function Invoke-PanelUpdate {
 
         if (-not $exeAsset) {
             # 约定式地址：Release 附件名固定为 EdgePanel.exe / SHA256SUMS.txt
-            $dlBase = 'https://github.com/' + $script:panelUpdateRepo.Trim('/') + '/releases/download/' + $tagVerText
+            $dlBase = 'https://github.com/' + $script:panelUpdateRepo.Trim('/') + '/releases/download/' + $(if ($rawTag) { $rawTag } else { $tagVerText })
             $panelLatestInfo = @{ Version = $tagVerText; ExeUrl = ($dlBase + '/EdgePanel.exe'); ShaUrl = ($dlBase + '/SHA256SUMS.txt') }
         } else {
             $panelLatestInfo = @{ Version = $tagVerText; ExeUrl = [string]$exeAsset.browser_download_url; ShaUrl = $(if ($shaAsset) { [string]$shaAsset.browser_download_url } else { '' }) }
@@ -3531,11 +3547,12 @@ function Invoke-PanelUpdate {
         Set-PanelUpdateHighlight $true
         Write-Log ('发现面板新版本：v' + $script:panelVersion + ' → v' + $tagVerText) 'warn'
         if ($RunOnce) { return }
-
-        $ans = [System.Windows.Forms.MessageBox]::Show(
-            ("发现面板新版本：v" + $script:panelVersion + " → v" + $tagVerText + "`r`n`r`n将通过国内镜像站下载新版 EXE、校验 SHA256，并保留旧版为 Edge面板.exe.old。现在更新吗？"),
-            '更新便携 Edge 面板', 'YesNo', 'Question', 'Button1')
-        if ($ans -ne 'Yes') { Write-Log '已取消面板更新'; return }
+        if (-not $SkipConfirm) {
+            $ans = [System.Windows.Forms.MessageBox]::Show(
+                ("发现面板新版本：v" + $script:panelVersion + " → v" + $tagVerText + "`r`n`r`n将通过国内镜像站下载新版 EXE、校验 SHA256，并保留旧版为 .old。现在更新吗？"),
+                '更新便携 Edge 面板', 'YesNo', 'Question', 'Button1')
+            if ($ans -ne 'Yes') { Write-Log '已取消面板更新'; return }
+        }
 
         $dlUrl = $panelLatestInfo.ExeUrl
         $mirrors = @(
@@ -3590,33 +3607,57 @@ function Invoke-PanelUpdate {
             }
         }
 
-        $curExe = Join-Path $exeDir 'Edge面板.exe'
-        if (-not (Test-Path -LiteralPath $curExe)) { throw ('未找到当前面板 EXE：' + $curExe) }
+        # 替换"当前正在运行的这个 EXE"：宿主通过 EP_EXEPATH 传入真实路径（用户可能把文件改名成 EdgePanel.exe）
+        $curExe = [string]$env:EP_EXEPATH
+        if (-not $curExe -or -not (Test-Path -LiteralPath $curExe)) {
+            $curExe = ''
+            foreach ($nm in @('EdgePanel.exe', 'Edge面板.exe')) {
+                $cand = Join-Path $exeDir $nm
+                if (Test-Path -LiteralPath $cand) { $curExe = $cand; break }
+            }
+        }
+        if (-not $curExe) { throw ('未找到当前面板 EXE（已查 EP_EXEPATH、EdgePanel.exe、Edge面板.exe）') }
         $failLog = Join-Path $exeDir 'update-failed.txt'
-        $cmdPath = Join-Path $env:TEMP 'edgepanel-apply-update.cmd'
-        # 重试循环（最多 10 次 × 1 秒）：使用标准 timeout 替代 ping 延时、去掉脚本自删(del %~f0)并以最小化窗口执行，降低杀软误报
-        $cmdBody = @"
-@echo off
-setlocal enabledelayedexpansion
-set TRIES=0
-:retry
-set /a TRIES+=1
-timeout /t 1 /nobreak >nul
-copy /y "$curExe" "$curExe.old" >nul 2>&1
-move /y "$newExe" "$curExe" >nul 2>&1
-if not errorlevel 1 goto done
-if !TRIES! lss 10 goto retry
-echo [%date% %time%] 替换 Edge面板.exe 失败（文件被占用，已重试 10 次）。新版文件仍在：$newExe > "$failLog"
-exit /b 1
-:done
-if exist "$failLog" del /f /q "$failLog" >nul 2>&1
-start "" "$curExe"
-rd /s /q "$tmpDir" >nul 2>&1
-"@
-        [System.IO.File]::WriteAllText($cmdPath, $cmdBody, [System.Text.Encoding]::Default)
+        # 用 PowerShell 助手脚本做替换（不再用 .cmd）：
+        # ① .cmd 里的 `timeout /t 1 /nobreak` 在无控制台窗口下会卡住（实测整个替换挂死不退出）；
+        # ② .cmd 还必须按 ANSI 写盘，中文文件名容易踩编码；
+        # ③ 也顺手避开 `cmd /c move /y + del %~f0` 这套杀软最容易误报的组合。
+        $helperPath = Join-Path $env:TEMP 'edgepanel-apply-update.ps1'
+        $helperBody = @'
+param([string]$CurExe, [string]$NewExe, [string]$TmpDir, [string]$FailLog)
+Start-Sleep -Milliseconds 1200
+$ok = $false
+$lastErr = ''
+for ($i = 0; $i -lt 24; $i++) {
+    try {
+        if (Test-Path -LiteralPath ($CurExe + '.old')) { Remove-Item -LiteralPath ($CurExe + '.old') -Force -ErrorAction SilentlyContinue }
+        Copy-Item -LiteralPath $CurExe -Destination ($CurExe + '.old') -Force -ErrorAction Stop
+        Move-Item -LiteralPath $NewExe -Destination $CurExe -Force -ErrorAction Stop
+        $ok = $true
+        break
+    } catch {
+        $lastErr = $_.Exception.Message
+        Start-Sleep -Milliseconds 500
+    }
+}
+if ($ok) {
+    try { if (Test-Path -LiteralPath $FailLog) { Remove-Item -LiteralPath $FailLog -Force -ErrorAction SilentlyContinue } } catch { }
+    try { Start-Process -FilePath $CurExe } catch { }
+    try { Remove-Item -LiteralPath $TmpDir -Recurse -Force -ErrorAction SilentlyContinue } catch { }
+} else {
+    try {
+        Set-Content -LiteralPath $FailLog -Value (('[' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '] 替换失败（文件被占用 24 次重试均失败）：' + $lastErr + '；新版文件仍在：' + $NewExe)) -Encoding UTF8
+    } catch { }
+}
+try { Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue } catch { }
+'@
+        [System.IO.File]::WriteAllText($helperPath, $helperBody, (New-Object System.Text.UTF8Encoding($true)))
         Write-Log '新版面板已就绪，即将退出并自动重启更新…' 'ok'
-        Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', $cmdPath) -WindowStyle Minimized | Out-Null
+        Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
+            -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $helperPath, $curExe, $newExe, $tmpDir, $failLog) `
+            -WindowStyle Hidden | Out-Null
         $form.Close()
+
     } catch {
         Write-Log ('面板更新失败：' + $_.Exception.Message) 'err'
     } finally {
