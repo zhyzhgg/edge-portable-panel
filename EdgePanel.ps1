@@ -3172,7 +3172,29 @@ function Invoke-UpdateNow([bool]$withSlim = $false) {
         $ex = Join-Path $temp 'ex'
         if (-not (Test-Path -LiteralPath $ex)) { New-Item -ItemType Directory -Path $ex -Force | Out-Null }
         Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
-        [System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $ex)
+        # 435 MB 压缩包解出 976 MB：同步跑会占住 UI 线程十几秒，Windows 直接标「未响应」（实测 11.1 秒）。
+        # 跟下载一样丢到独立 runspace，UI 只 DoEvents，解压期间窗口仍可拖动/关闭。
+        $exRs = [runspacefactory]::CreateRunspace(); $exRs.Open()
+        $exPs = [powershell]::Create(); $exPs.Runspace = $exRs
+        [void]$exPs.AddScript('[void][System.Reflection.Assembly]::LoadWithPartialName("System.IO.Compression.FileSystem"); [System.IO.Compression.ZipFile]::ExtractToDirectory($args[0], $args[1])').AddArgument($zip).AddArgument($ex)
+        $exHandle = $exPs.BeginInvoke()
+        $exT0 = Get-Date
+        try {
+            while (-not $exHandle.IsCompleted) {
+                if ($script:closeRequested) { try { [void]$exPs.BeginStop($null, $null) } catch { }; throw '已取消解压' }
+                Start-Sleep -Milliseconds 120
+                try { [System.Windows.Forms.Application]::DoEvents() } catch { }
+                $secNow = [int]((Get-Date) - $exT0).TotalSeconds
+                try { $lblHint.Text = ('解压中… 已 ' + $secNow + ' 秒（界面仍可用）'); $form.Refresh() } catch { }
+            }
+            [void]$exPs.EndInvoke($exHandle)      # 内层抛的异常会在这里冒出来
+        } catch {
+            if ($script:closeRequested) { throw '已取消解压' }
+            throw ('解压失败：' + $_.Exception.Message)
+        } finally {
+            try { $exPs.Dispose() } catch { }
+            try { $exRs.Dispose() } catch { }
+        }
         Remove-Item -LiteralPath $zip -Force
         $extracted = Get-ChildItem $ex -Recurse -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq 'Edge' } | Select-Object -First 1
         if (-not $extracted) { throw '压缩包里没找到 Edge 目录' }
@@ -3287,16 +3309,29 @@ if (-not $script:updateBackupOk -and -not $dry) {
         try {
             Write-Log '覆盖新文件…'
             $base = $extracted.FullName
-            Get-ChildItem -LiteralPath $base -Recurse -Force | ForEach-Object {
-                $rel = $_.FullName.Substring($base.Length + 1)
+            # 逐条推进 + 定期 DoEvents：976 MB / 500 个文件，同步拷贝也会让窗口短暂"未响应"
+            $allItems = @(Get-ChildItem -LiteralPath $base -Recurse -Force)
+            $nItem = 0
+            $lastPump = Get-Date
+            foreach ($item in $allItems) {
+                $nItem++
+                $rel = $item.FullName.Substring($base.Length + 1)
                 $dest = Join-Path $edgeRoot $rel
-                if ($_.PSIsContainer) {
+                if ($item.PSIsContainer) {
                     if (-not (Test-Path -LiteralPath $dest)) { New-Item -ItemType Directory -Path $dest -Force | Out-Null }
                 } else {
-                    if (($script:protectedOnUpdate -contains $_.Name) -and (Test-Path -LiteralPath $dest)) { return }
-                    $dir = Split-Path $dest -Parent
-                    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-                    Copy-Item -LiteralPath $_.FullName -Destination $dest -Force
+                    if (-not (($script:protectedOnUpdate -contains $item.Name) -and (Test-Path -LiteralPath $dest))) {
+                        $dir = Split-Path $dest -Parent
+                        if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+                        Copy-Item -LiteralPath $item.FullName -Destination $dest -Force
+                    }
+                }
+                if ((($nItem % 20) -eq 0) -or (((Get-Date) - $lastPump).TotalMilliseconds -ge 250)) {
+                    $lastPump = Get-Date
+                    try {
+                        $lblHint.Text = ('覆盖文件 {0}/{1} …' -f $nItem, $allItems.Count)
+                        [System.Windows.Forms.Application]::DoEvents()
+                    } catch { }
                 }
             }
             # 包根 proxy：PWA/站点应用快捷方式指向它，而上游包根从不提供。必须在下面的复核之前补，

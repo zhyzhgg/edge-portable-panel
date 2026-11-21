@@ -12,17 +12,105 @@ using System.Text.RegularExpressions;
 internal static class Host
 {
     // 资源版本号：内容变了就改这里，触发重新解包
-    private const string ResourceVersion = "2026-11-21.193";   // 解包目录键（每次改内容 -Bump）
+    private const string ResourceVersion = "2026-11-21.194";   // 解包目录键（每次改内容 -Bump）
     private const string ProductVersion = "v1.3.3";   // 必须与 EdgePanel.ps1 的 $script:panelVersion 一致（build.ps1 自动校验）
     private const string FallbackFolderName = "EdgePanel";
 
     // 本次运行实际使用的运行时根目录（logs/cache 都挂在它下面）
     private static string _runtimeRoot;
 
+    // 单实例：同一个便携包只允许一个面板（两个实例同时更新会互踩 Edge\_old 与新文件）
+    private static System.Threading.Mutex _single;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int GetWindowTextW(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    // 把已经打开的面板窗口顶到前面（找不到就返回 false）
+    private static bool ActivateExistingPanel()
+    {
+        IntPtr found = IntPtr.Zero;
+        try
+        {
+            EnumWindows(delegate(IntPtr h, IntPtr l)
+            {
+                if (!IsWindowVisible(h)) return true;
+                var sb = new StringBuilder(256);
+                GetWindowTextW(h, sb, 256);
+                if (sb.ToString().StartsWith("便携 Edge 面板"))
+                {
+                    found = h;
+                    return false;   // 找到就停
+                }
+                return true;
+            }, IntPtr.Zero);
+        }
+        catch { }
+        if (found == IntPtr.Zero) return false;
+        try { ShowWindow(found, 9); } catch { }          // SW_RESTORE
+        try { SetForegroundWindow(found); } catch { }
+        return true;
+    }
+
     [STAThread]
     private static int Main(string[] args)
     {
         string exeDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+
+        // ---- 单实例守卫（必须放在解包之前：避免第二个实例重复解包、重复写日志）----
+        // 键按「EXE 所在目录」算：同一个便携包只允许一个面板；把 EXE 拷到另一个包根则是另一个实例。
+        // 测试钩子：EP_ALLOW_MULTI=1 时跳过（自测要并发拉起时用）。
+        if (Environment.GetEnvironmentVariable("EP_ALLOW_MULTI") != "1")
+        {
+            string mutexKey;
+            try
+            {
+                using (var sha = System.Security.Cryptography.SHA1.Create())
+                {
+                    byte[] hb = sha.ComputeHash(Encoding.UTF8.GetBytes(exeDir.ToLowerInvariant()));
+                    var sbKey = new StringBuilder();
+                    for (int i = 0; i < 8; i++) sbKey.Append(hb[i].ToString("X2"));
+                    mutexKey = sbKey.ToString();
+                }
+            }
+            catch { mutexKey = (exeDir.GetHashCode() & 0x7FFFFFFF).ToString("X8"); }
+            bool createdNew;
+            try
+            {
+                _single = new System.Threading.Mutex(true, "Local\\EdgePanel_" + mutexKey, out createdNew);
+            }
+            catch { createdNew = true; }   // 拿不到互斥体也不该挡住启动
+            if (!createdNew)
+            {
+                bool activated = false;
+                for (int i = 0; i < 10 && !activated; i++)   // 新实例可能还在建窗口，最多等 3 秒
+                {
+                    activated = ActivateExistingPanel();
+                    if (!activated) System.Threading.Thread.Sleep(300);
+                }
+                if (!activated)
+                {
+                    try
+                    {
+                        System.Windows.Forms.MessageBox.Show(
+                            "这个便携包的面板已经在运行了。\r\n\r\n" +
+                            "为避免两个面板同时更新/瘦身把文件写坏，同一便携包只允许开一个。",
+                            "便携 Edge 面板", System.Windows.Forms.MessageBoxButtons.OK,
+                            System.Windows.Forms.MessageBoxIcon.Information);
+                    }
+                    catch { }
+                }
+                return 0;
+            }
+        }
 
         // 运行时目录固定放用户目录：包根保持干净（不再释放 .runtime）。
         // EP_RUNTIME 可覆盖（测试版隔离 / 特殊部署用）；不设就落到 %LOCALAPPDATA%\EdgePanel。
