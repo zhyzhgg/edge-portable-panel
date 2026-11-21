@@ -1294,10 +1294,12 @@ try {
 
     Write-Log '正在请求管理员权限（UAC）以写入策略键…'
     try {
+        # Start-Process -ArgumentList 的数组元素**不会自动加引号**（PS 5.1.26100 与 7 实测一致）：
+        # 含空格的路径会被命令行拆成两个参数、后续参数整体错位 ⇒ 含路径的元素必须自己包一层双引号。
         $psi = @(
-            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $helper,
-            '-RegFile', $regFile, '-ResultFile', $result,
-            '-KeyPath', ($script:policyKey -replace '^HKCU:', 'HKCU')
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $helper + '"'),
+            '-RegFile', ('"' + $regFile + '"'), '-ResultFile', ('"' + $result + '"'),
+            '-KeyPath', ('"' + ($script:policyKey -replace '^HKCU:', 'HKCU') + '"')
         )
         Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
             -ArgumentList $psi -Verb RunAs -WindowStyle Hidden -Wait | Out-Null
@@ -2707,8 +2709,9 @@ function Open-PolicyGui {
             [ordered]@{ theme = [string]$env:EP_THEME; updated = (Get-Date).ToString('s') } |
                 ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $themeDir 'ui-theme.json') -Encoding UTF8
         } catch { Write-Log ('主题文件写入失败（策略窗口可能跟随系统色）：' + $_.Exception.Message) 'warn' }
+        # 含路径的元素自己加引号：-ArgumentList 不会替你加，包根／脚本路径带空格时会被拆成两个参数
         Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
-            -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runZh, '-NoElevate', '-EdgeRoot', $edgeRoot) -WorkingDirectory (Split-Path $runZh -Parent) -WindowStyle Hidden | Out-Null
+            -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $runZh + '"'), '-NoElevate', '-EdgeRoot', ('"' + $edgeRoot + '"')) -WorkingDirectory (Split-Path $runZh -Parent) -WindowStyle Hidden | Out-Null
         Write-Log '已拉起策略界面' 'ok'
           try { Start-PolicyWatch } catch { }   # 只读监听那 4 条专属推荐策略
     } catch { Write-Log ('启动失败：' + $_.Exception.Message) 'err' }
@@ -3628,10 +3631,16 @@ param([string]$CurExe, [string]$NewExe, [string]$TmpDir, [string]$FailLog)
 Start-Sleep -Milliseconds 1200
 $ok = $false
 $lastErr = ''
+$bakDone = $false
 for ($i = 0; $i -lt 24; $i++) {
     try {
-        if (Test-Path -LiteralPath ($CurExe + '.old')) { Remove-Item -LiteralPath ($CurExe + '.old') -Force -ErrorAction SilentlyContinue }
-        Copy-Item -LiteralPath $CurExe -Destination ($CurExe + '.old') -Force -ErrorAction Stop
+        # 备份只在第一轮做一次，之后不再碰它：老写法每轮「先删 .old 再重建」——
+        # 一旦 $CurExe 在重试过程中被外部删掉／被独占，就会把唯一的备份也一起丢掉。
+        if (-not $bakDone -and (Test-Path -LiteralPath $CurExe)) {
+            if (Test-Path -LiteralPath ($CurExe + '.old')) { Remove-Item -LiteralPath ($CurExe + '.old') -Force -ErrorAction SilentlyContinue }
+            Copy-Item -LiteralPath $CurExe -Destination ($CurExe + '.old') -Force -ErrorAction Stop
+            $bakDone = $true
+        }
         Move-Item -LiteralPath $NewExe -Destination $CurExe -Force -ErrorAction Stop
         $ok = $true
         break
@@ -3645,16 +3654,38 @@ if ($ok) {
     try { Start-Process -FilePath $CurExe } catch { }
     try { Remove-Item -LiteralPath $TmpDir -Recurse -Force -ErrorAction SilentlyContinue } catch { }
 } else {
+    # 失败自愈（面板此前已自己退出，不补这一步用户看到的就是"窗口消失、再也不出现"）：
+    # ① 极端情况目标 EXE 已不在（被外部删掉/清掉）→ 从 .old 还原；
+    # ② 无论哪种失败，都把旧面板重新拉起来；并置 EP_NO_PANEL_PROBE=1，避免拉起后又弹一次更新提示形成死循环。
+    $restored = $false
     try {
-        Set-Content -LiteralPath $FailLog -Value (('[' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '] 替换失败（文件被占用 24 次重试均失败）：' + $lastErr + '；新版文件仍在：' + $NewExe)) -Encoding UTF8
+        if (-not (Test-Path -LiteralPath $CurExe) -and (Test-Path -LiteralPath ($CurExe + '.old'))) {
+            Copy-Item -LiteralPath ($CurExe + '.old') -Destination $CurExe -Force -ErrorAction Stop
+            $restored = $true
+        }
+    } catch { }
+    try {
+        $msg = ('[' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '] 替换失败（24 次重试均失败）：' + $lastErr +
+                '；当前面板：' + $CurExe + $(if ($restored) { '（已从 .old 还原）' } else { '' }) +
+                '；旧版备份：' + $CurExe + '.old；新版文件仍在：' + $NewExe)
+        Set-Content -LiteralPath $FailLog -Value $msg -Encoding UTF8
+    } catch { }
+    try {
+        if (Test-Path -LiteralPath $CurExe) {
+            $env:EP_NO_PANEL_PROBE = '1'
+            Start-Process -FilePath $CurExe
+        }
     } catch { }
 }
 try { Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue } catch { }
 '@
         [System.IO.File]::WriteAllText($helperPath, $helperBody, (New-Object System.Text.UTF8Encoding($true)))
         Write-Log '新版面板已就绪，即将退出并自动重启更新…' 'ok'
+        # 含路径的元素自己加引号：-ArgumentList 不会替你加。这条尤其致命——
+        # 面板所在目录带空格（如 C:\Program Files\... 或把便携包放进带空格的文件夹）时参数整体错位，
+        # Copy-Item 每次必失败、连 update-failed.txt 的路径也一起错位 ⇒ 更新静默失败且无任何提示。
         Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
-            -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $helperPath, $curExe, $newExe, $tmpDir, $failLog) `
+            -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"' + $helperPath + '"'), ('"' + $curExe + '"'), ('"' + $newExe + '"'), ('"' + $tmpDir + '"'), ('"' + $failLog + '"')) `
             -WindowStyle Hidden | Out-Null
         $form.Close()
 
