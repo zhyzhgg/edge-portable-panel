@@ -22,9 +22,8 @@ $here = $PSScriptRoot
 if ($EdgeRoot) { $edge = $EdgeRoot }
 elseif ($env:EP_EXEDIR) { $pkgRoot = Find-PackageRoot $env:EP_EXEDIR; $edge = Join-Path $pkgRoot 'Edge' }
 else { $pkgRoot = Find-PackageRoot $here; $edge = Join-Path $pkgRoot 'Edge' }
-# 中文副本放在固定缓存目录（不随面板解包键变化），升级后面板可直接复用、不必重翻
-$work = Join-Path (Join-Path $env:LOCALAPPDATA 'EdgePanel') '_shared\zh-work'
-if (-not $env:LOCALAPPDATA) { $work = Join-Path $here 'work' }
+# 与面板共用 _Common.ps1 的 Get-ZhWorkDir，跨解包键复用中文副本且杜绝双处路径漂移
+$work = Get-ZhWorkDir $here
 $url = 'https://edgev2.bibica.net/debloater-gui.ps1'
 $src = Join-Path $work 'src.ps1'
 $out = Join-Path $work 'out.ps1'

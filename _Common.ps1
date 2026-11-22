@@ -87,3 +87,11 @@ function Get-EdgeMajorVersion([string]$pkgRoot) {
     } catch { }
     return 0
 }
+
+function Get-ZhWorkDir([string]$fallbackBase) {
+    <#  策略管理中文副本共享目录（唯一事实源，EdgePanel.ps1 与 run-zh.ps1 共用，防止双处路径漂移）。 #>
+    if ($env:LOCALAPPDATA) {
+        return (Join-Path (Join-Path $env:LOCALAPPDATA 'EdgePanel') '_shared\zh-work')
+    }
+    return (Join-Path $fallbackBase 'work')
+}

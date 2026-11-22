@@ -535,6 +535,35 @@ $lblTitle.AutoSize = $true
 $lblTitle.Location = New-Object System.Drawing.Point((S 18), (S 6))
 $header.Controls.Add($lblTitle)
 
+# 顶栏轻量入口：项目主页与问题列表页（位于标题右侧净空 X=276..402, Y=15..35，不挤压任何卡片）
+$lnkRepo = New-Object System.Windows.Forms.Label
+$lnkRepo.Text = 'GitHub'
+$lnkRepo.Font = $fontSmall
+$lnkRepo.ForeColor = $clrOnDarkMuted
+$lnkRepo.AutoSize = $false
+$lnkRepo.TextAlign = 'MiddleLeft'
+$lnkRepo.Location = New-Object System.Drawing.Point((S 276), (S 15))
+$lnkRepo.Size = New-Object System.Drawing.Size((S 54), (S 20))
+$lnkRepo.Cursor = 'Hand'
+$lnkRepo.Add_Click({ if ($script:panelUpdateRepo) { try { Start-Process ('https://github.com/' + $script:panelUpdateRepo.Trim('/')) } catch { } } })
+$lnkRepo.Add_MouseEnter({ $lnkRepo.ForeColor = $clrHeaderAccent })
+$lnkRepo.Add_MouseLeave({ $lnkRepo.ForeColor = $clrOnDarkMuted })
+$header.Controls.Add($lnkRepo)
+
+$lnkIssues = New-Object System.Windows.Forms.Label
+$lnkIssues.Text = '反馈问题'
+$lnkIssues.Font = $fontSmall
+$lnkIssues.ForeColor = $clrOnDarkMuted
+$lnkIssues.AutoSize = $false
+$lnkIssues.TextAlign = 'MiddleLeft'
+$lnkIssues.Location = New-Object System.Drawing.Point((S 334), (S 15))
+$lnkIssues.Size = New-Object System.Drawing.Size((S 68), (S 20))
+$lnkIssues.Cursor = 'Hand'
+$lnkIssues.Add_Click({ if ($script:panelUpdateRepo) { try { Start-Process ('https://github.com/' + $script:panelUpdateRepo.Trim('/') + '/issues') } catch { } } })
+$lnkIssues.Add_MouseEnter({ $lnkIssues.ForeColor = $clrHeaderAccent })
+$lnkIssues.Add_MouseLeave({ $lnkIssues.ForeColor = $clrOnDarkMuted })
+$header.Controls.Add($lnkIssues)
+
 $lblSub = New-Object System.Windows.Forms.Label
 $lblSub.Text = $pkgRoot
 $lblSub.Font = $fontSub
@@ -757,6 +786,8 @@ $script:tip.SetToolTip($valIni,    "chrome++.ini 的 command_line 里是否带 -
 $script:tip.SetToolTip($valCache,  "常规清理能释放的量（大头在包根 Cache\，另有 GPU/着色器缓存、诊断指标包等）")
 $script:tip.SetToolTip($script:btnBackup, "清理缓存并备份用户数据（可选加密、保留份数、保存位置）")
 $script:tip.SetToolTip($script:btnRestore, "从备份包恢复用户数据；完整包还能把 Edge 程序一起铺回来")
+$script:tip.SetToolTip($lnkRepo, "打开 GitHub 项目主页")
+$script:tip.SetToolTip($lnkIssues, "打开 GitHub Issues 问题列表页（可先查看已有问题，避免重复提交）")
 $script:tip.SetToolTip($script:btnPanelUpdate, "检查并更新面板程序本身（有新版变绿，走国内镜像站下载并校验 SHA256）")
 $script:tip.SetToolTip($script:btnRefresh, "刷新上方全部状态卡与可清理量")
 $script:tip.SetToolTip($script:btnUpdate,     "只替换程序文件（保留 chrome++.ini 等配置），不动语言包和组件")
@@ -818,10 +849,12 @@ if ($maxH -lt $wantH) {
 # ---------------- 日志 / 忙碌态 ----------------
 function Write-Log([string]$text, [string]$level = 'info') {
     $t = (Get-Date).ToString('HH:mm:ss')
-    $prefix = switch ($level) { 'ok' { '  OK  ' } 'warn' { ' WARN ' } 'err' { ' FAIL ' } default { ' ·    ' } }
-    Write-Host ("[$t]$prefix$text")
+    # 级别必须是「2 个全角汉字」宽：实测雅黑 8.5pt 下「完成/警告/失败/信息」都是 39 px，而 U+2500 只有 31 px（会错位 8 px）
+    $tag = switch ($level) { 'ok' { '完成' } 'warn' { '警告' } 'err' { '失败' } default { '信息' } }
+    $line = "$t │ $tag │ $text"
+    Write-Host $line
     if ($log -and -not $log.IsDisposed) {
-        $log.AppendText("[$t]$prefix$text`r`n") | Out-Null
+        $log.AppendText($line + "`r`n") | Out-Null
         $log.SelectionStart = $log.TextLength
         $log.ScrollToCaret()
     }
@@ -2846,10 +2879,9 @@ function Open-PolicyGui {
         } catch { Write-Log ('主题文件写入失败（策略窗口可能跟随系统色）：' + $_.Exception.Message) 'warn' }
         $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
         $zhDir = Split-Path $runZh -Parent
-        # 中文副本位置必须与 run-zh.ps1 的 $work 保持一致（.210 起搬到了共享目录，不再随解包键变化）
-        $outPs1 = Join-Path (Join-Path (Join-Path $env:LOCALAPPDATA 'EdgePanel') '_shared\zh-work') 'out.ps1'
-        if (-not $env:LOCALAPPDATA -or -not (Test-Path -LiteralPath $outPs1)) {
-            # 兼容旧位置（run-zh 在 LOCALAPPDATA 缺失时才回退到脚本同级 work\）
+        # 与 run-zh.ps1 共用 _Common.ps1 的 Get-ZhWorkDir，机制化杜绝双处路径漂移
+        $outPs1 = Join-Path (Get-ZhWorkDir $zhDir) 'out.ps1'
+        if (-not (Test-Path -LiteralPath $outPs1)) {
             $legacy = Join-Path (Join-Path $zhDir 'work') 'out.ps1'
             if (Test-Path -LiteralPath $legacy) { $outPs1 = $legacy }
         }
