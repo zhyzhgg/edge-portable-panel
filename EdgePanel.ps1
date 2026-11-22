@@ -15,6 +15,7 @@ $script:panelProbeRs = $null
 $script:panelProbeHandle = $null
 $script:panelProbeTimer = $null
 $script:panelProbeDelay = $null
+$script:pwaGapChecked = $false
 $script:panelProbeDone = $false
 $script:policyKey = $env:EP_POLICY_KEY
 
@@ -3610,6 +3611,30 @@ function Get-PanelLatestTagRedirect {
     return ''
 }
 
+function Test-PwaRegistrationGap {
+    # 便携模式固有限制：装过站点应用（有 _crx__ 缓存目录）但 Edge 内部没有登记（Preferences.web_apps 为空）
+    # 命中时只在启动日志写一行提示，不弹窗、不阻断；每次启动只判一次
+    try {
+        if ($script:pwaGapChecked) { return }
+        $script:pwaGapChecked = $true
+        $dataDefault = Join-Path $pkgRoot 'Data\Default'
+        if (-not (Test-Path -LiteralPath $dataDefault)) { return }
+        $wa = Join-Path $dataDefault 'Web Applications'
+        if (-not (Test-Path -LiteralPath $wa)) { return }
+        $hasCache = @(Get-ChildItem -LiteralPath $wa -Directory -ErrorAction SilentlyContinue |
+                      Where-Object { $_.Name -like '_crx__*' }).Count -gt 0
+        if (-not $hasCache) { return }
+        $prefFile = Join-Path $dataDefault 'Preferences'
+        if (-not (Test-Path -LiteralPath $prefFile)) { return }
+        $pref = $null
+        try { $pref = [System.IO.File]::ReadAllText($prefFile, [System.Text.Encoding]::UTF8) | ConvertFrom-Json } catch { return }
+        $apps = 0
+        try { if ($pref.web_apps -and $pref.web_apps.web_apps) { $apps = @($pref.web_apps.web_apps.PSObject.Properties).Count } } catch { }
+        if ($apps -gt 0) { return }
+        Write-Log '装过站点应用但 Edge 内部未登记（便携模式固有限制）：三点菜单「应用 → 管理应用」会是灰的。要看列表可在收藏夹加 edge://apps（页面为空属正常）' 'warn'
+    } catch { }
+}
+
 function Start-PanelUpdateProbe {
     # 启动后静默探测面板自身有没有新版：后台 runspace 发请求，UI 线程只轮询结果；
     # 查到新版才变绿 + 弹一次窗（默认「否」，绝不自动替换 EXE）。
@@ -4000,6 +4025,7 @@ Write-Log ('面板已启动；包根：' + $pkgRoot)
                     try { $script:panelProbeDelay.Stop(); $script:panelProbeDelay.Dispose() } catch { }
                     $script:panelProbeDelay = $null
                     Start-PanelUpdateProbe
+                    try { Test-PwaRegistrationGap } catch { }
                 })
                 $script:panelProbeDelay.Start()
             } catch { }
