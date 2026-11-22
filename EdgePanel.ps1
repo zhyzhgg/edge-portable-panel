@@ -1784,8 +1784,18 @@ function Add-DialogFooter($dlg, [int]$dlgWidth, [int]$contentBottomY, [string]$o
     })
     $dlg.Controls.Add($footer)
 
-    $btnH = S 30; $btnY = S 13
-    $wCancel = S 92; $wOk = S 112; $gap = S 10
+    # 宽度按文字实测 + 内边距（下限沿用设计值），避免长文案被截断成「关闭 Edge 并…」
+    $btnH = S 30; $btnY = S 13; $gap = S 10
+    $padX = S 18
+    $wOk = [int][math]::Max((S 112), ([System.Windows.Forms.TextRenderer]::MeasureText($okText, $fontBase).Width + 2 * $padX))
+    $wCancel = [int][math]::Max((S 92), ([System.Windows.Forms.TextRenderer]::MeasureText($cancelText, $fontBase).Width + 2 * $padX))
+    # 两个按钮 + 间距不得超过底栏可用宽度（超了等比压缩，宁窄也不出界）
+    $availW = $dlgWidth - 2 * $pad
+    if (($wOk + $wCancel + $gap) -gt $availW) {
+        $scaleW = ([double]($availW - $gap)) / ($wOk + $wCancel)
+        $wOk = [int][math]::Floor($wOk * $scaleW)
+        $wCancel = [int][math]::Floor($wCancel * $scaleW)
+    }
     $btnCancel = New-DialogBtn $footer ($dlgWidth - $pad - $wCancel) $btnY $wCancel $btnH $cancelText 'secondary' 'Cancel'
     $btnOk     = New-DialogBtn $footer ($dlgWidth - $pad - $wCancel - $gap - $wOk) $btnY $wOk $btnH $okText $okVariant 'OK'
 
@@ -1867,16 +1877,16 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $chk.Checked = ($cfg.last -eq 'encrypted')
     $chk.ForeColor = $clrText
     $chkH = $chk.PreferredSize.Height
-    $chkY = $rowY + [int][math]::Max(0, (((S 26) - $chkH) / 2))
+    $chkY = $rowY + [int][math]::Floor([math]::Max(0, (((S 26) - $chkH) / 2)))
     $chk.Location = New-Object System.Drawing.Point(($pad + (S 2)), $chkY)
     $dlg.Controls.Add($chk)
 
     $pwStatus = New-Object System.Windows.Forms.Label
     $pwStatus.AutoSize = $false
     $pwStatus.TextAlign = 'MiddleLeft'
-    $pwStatus.Size = New-Object System.Drawing.Size((S 140), (S 26))
+    $pwStatus.Size = New-Object System.Drawing.Size((S 140), ([int]$chkH))
     $pwStatus.ForeColor = $clrMuted
-    $pwStatus.Location = New-Object System.Drawing.Point(($chk.Right + (S 6)), ($rowY + 1))
+    $pwStatus.Location = New-Object System.Drawing.Point(($chk.Right + (S 6)), ([int]$chkY))
     $dlg.Controls.Add($pwStatus)
 
     $btnPw = New-DialogBtn $dlg ($w - $pad - (S 104)) $rowY (S 104) (S 26) '修改密码…' 'secondary'
@@ -3912,7 +3922,7 @@ $form.Add_Shown({
             $running = @(Get-PackageProcs)
             if ($running.Count -gt 0) {
                 Write-Log ('检测到本包 Edge 正在运行（' + $running.Count + ' 个进程）') 'warn'
-                $ansRun = $(if (Show-DialogAsk 'Edge 正在运行' ("当前便携包 Edge 正在运行（" + $running.Count + " 个进程）。`r`n`r`n" + "执行瘦身、清理或更新前需先退出浏览器。`r`n`r`n" + "是否现在关闭？（先正常关闭窗口，8 秒未退出将强制结束，不影响系统其他浏览器）") '关闭 Edge 并继续' '暂不') { 'Yes' } else { 'No' })
+                $ansRun = $(if (Show-DialogAsk 'Edge 正在运行' ("当前便携包 Edge 正在运行（" + $running.Count + " 个进程）。`r`n`r`n" + "执行瘦身、清理或更新前需先退出浏览器。`r`n`r`n" + "是否现在关闭？（先正常关闭窗口，8 秒未退出将强制结束，不影响系统其他浏览器）") '关闭并继续' '暂不') { 'Yes' } else { 'No' })
                 if ($ansRun -eq 'Yes') { Close-Edge }
                 else { Write-Log '保持运行；等你要瘦身/清理/备份时，面板会再问一次要不要关。' 'warn' }
             }
