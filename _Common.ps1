@@ -78,3 +78,12 @@ function Test-EdgeRunningIn([string]$pkgRoot) {
     <#  有没有"属于这个包"的 msedge 在跑（判定逻辑只有 Get-EdgeProcs 一份）。 #>
     return @((Get-EdgeProcs $pkgRoot).Procs).Count
 }
+
+function Get-EdgeMajorVersion([string]$pkgRoot) {
+    <#  当前便携包的 Edge 主版本号（如 158）；取不到时返回 0，调用方需按"未知"处理。 #>
+    try {
+        $v = Resolve-VersionDir (Join-Path $pkgRoot 'Edge') 'msedge.exe'
+        if ($v) { return [int](((Split-Path $v -Leaf) -split '\.')[0]) }
+    } catch { }
+    return 0
+}

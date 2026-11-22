@@ -22,7 +22,9 @@ $here = $PSScriptRoot
 if ($EdgeRoot) { $edge = $EdgeRoot }
 elseif ($env:EP_EXEDIR) { $pkgRoot = Find-PackageRoot $env:EP_EXEDIR; $edge = Join-Path $pkgRoot 'Edge' }
 else { $pkgRoot = Find-PackageRoot $here; $edge = Join-Path $pkgRoot 'Edge' }
-$work = Join-Path $here 'work'
+# 中文副本放在固定缓存目录（不随面板解包键变化），升级后面板可直接复用、不必重翻
+$work = Join-Path (Join-Path $env:LOCALAPPDATA 'EdgePanel') '_shared\zh-work'
+if (-not $env:LOCALAPPDATA) { $work = Join-Path $here 'work' }
 $url = 'https://edgev2.bibica.net/debloater-gui.ps1'
 $src = Join-Path $work 'src.ps1'
 $out = Join-Path $work 'out.ps1'
@@ -93,10 +95,27 @@ try {
     if (Test-Path $ini) { Copy-Item $ini (Join-Path $work 'chrome++.ini') -Force }
     else { Log '警告：Edge 目录没有 chrome++.ini，策略键可能不对' 'Yellow' }
 
-    # ---- 4. 翻译 ----
-    # 同进程调用翻译脚本，省掉一次 powershell.exe 冷启动（首次提速 ~0.5 秒）
-    & (Join-Path $here 'translate.ps1') `
-        -Source $src -Out $out -Map (Join-Path $here 'zh-CN.json') -Report $report | Out-Null
+    # ---- 4. 翻译（能复用就复用）----
+    # 复用条件：中文副本已存在，且不旧于「上游脚本 / 翻译脚本 / 词表」三者中最新的那个
+    $mapFile = Join-Path $here 'zh-CN.json'
+    $transFile = Join-Path $here 'translate.ps1'
+    $reuse = $false
+    if ((Test-Path -LiteralPath $out) -and (Test-Path -LiteralPath $src)) {
+        try {
+            $outTime = (Get-Item -LiteralPath $out).LastWriteTimeUtc
+            $newest = (Get-Item -LiteralPath $src).LastWriteTimeUtc
+            foreach ($f in @($transFile, $mapFile)) {
+                if ((Test-Path -LiteralPath $f) -and (Get-Item -LiteralPath $f).LastWriteTimeUtc -gt $newest) { $newest = (Get-Item -LiteralPath $f).LastWriteTimeUtc }
+            }
+            $reuse = ($outTime -ge $newest)
+        } catch { $reuse = $false }
+    }
+    if ($reuse) {
+        Log '复用上次的中文副本（上游脚本与词表都没变）' 'Green'
+    } else {
+        # 同进程调用翻译脚本，省掉一次 powershell.exe 冷启动
+        & $transFile -Source $src -Out $out -Map $mapFile -Report $report | Out-Null
+    }
     if (-not (Test-Path $out)) { throw '翻译没有生成 out.ps1' }
     $b = [System.IO.File]::ReadAllBytes($out)[0..2]
     if ($b[0] -eq 0xEF) { Log '已生成中文副本（UTF-8 with BOM）' 'Green' }

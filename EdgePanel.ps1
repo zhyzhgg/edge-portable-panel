@@ -1289,8 +1289,16 @@ function Apply-RecommendedPolicies {
     } catch {
         Write-Log ('策略基线解析失败：' + $_.Exception.Message) 'err'; return
     }
-    $mainCount = @($baseline | Where-Object { -not $_.sub }).Count
-    $subCount  = @($baseline | Where-Object { $_.sub }).Count
+    # 按当前 Edge 主版本过滤：maxMajor 超期的跳过；remove 条目只用于"顺手清掉旧值"
+    $curMajor = Get-EdgeMajorVersion $pkgRoot
+    $activeRecs = @($baseline | Where-Object {
+        -not $_.remove -and (-not $_.maxMajor -or $curMajor -eq 0 -or $curMajor -le [int]$_.maxMajor)
+    })
+    $dropRecs = @($baseline | Where-Object {
+        $_.remove -or ($_.maxMajor -and $curMajor -gt 0 -and $curMajor -gt [int]$_.maxMajor)
+    })
+    $mainCount = @($activeRecs | Where-Object { -not $_.sub }).Count
+    $subCount  = @($activeRecs | Where-Object { $_.sub }).Count
 
     $ok = Confirm-Action '应用推荐策略' ("将把推荐的 " + $mainCount + " 条主策略 + " + $subCount + " 条子键项写入注册表（同步推荐项并保留其它自定义项）。`r`n`r`n因为策略键只有管理员能写，会弹一次 UAC。继续吗？")
     if (-not $ok) { Write-Log '已取消应用推荐策略'; return }
@@ -1310,11 +1318,13 @@ function Apply-RecommendedPolicies {
     $out.Add('; 主策略 ' + $mainCount + ' 条 + 子键项 ' + $subCount + ' 条')
     $out.Add('')
     $out.Add('[' + $regPath + ']')
-    foreach ($r in ($baseline | Where-Object { -not $_.sub })) { $out.Add((ValueLine $r)) }
-    foreach ($skName in (@($baseline | Where-Object { $_.sub } | ForEach-Object { $_.sub }) | Sort-Object -Unique)) {
+    foreach ($r in ($activeRecs | Where-Object { -not $_.sub })) { $out.Add((ValueLine $r)) }
+    # 顺手删除"基线里已判定过时"的值（.reg 语法："名称"=- 表示删除该值）
+    foreach ($r in ($dropRecs | Where-Object { -not $_.sub })) { $out.Add(('"{0}"=-' -f (Esc $r.name))) }
+    foreach ($skName in (@($activeRecs | Where-Object { $_.sub } | ForEach-Object { $_.sub }) | Sort-Object -Unique)) {
         $out.Add('')
         $out.Add('[' + $regPath + '\' + $skName + ']')
-        foreach ($r in ($baseline | Where-Object { $_.sub -eq $skName })) { $out.Add((ValueLine $r)) }
+        foreach ($r in ($activeRecs | Where-Object { $_.sub -eq $skName })) { $out.Add((ValueLine $r)) }
     }
     [System.IO.File]::WriteAllLines($regFile, $out, [System.Text.Encoding]::Unicode)
 
@@ -1474,8 +1484,14 @@ function Get-ExtraPolicyDrift {
     $base = @{}
     foreach ($e in $script:baseline) { if ($e -and -not $e.sub) { $base[[string]$e.name] = $e.value } }
     $bad = @()
+    $curMajor = Get-EdgeMajorVersion $pkgRoot
     foreach ($n in $script:extraOnlyPolicies) {
         if (-not $base.ContainsKey($n)) { continue }
+        # 条目自带 maxMajor 且当前 Edge 已超过 → 不再当作"被误删"
+        if ($curMajor -gt 0) {
+            $meta = @($script:baseline | Where-Object { -not $_.sub -and [string]$_.name -eq $n -and $_.maxMajor } | Select-Object -First 1)
+            if ($meta -and $curMajor -gt [int]$meta.maxMajor) { continue }
+        }
         $cur = $null
         $has = $false
         try { $cur = (Get-ItemProperty -Path $script:policyKey -Name $n -ErrorAction Stop).$n; $has = $true } catch { }

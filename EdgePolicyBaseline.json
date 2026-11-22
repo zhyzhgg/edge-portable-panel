@@ -7,7 +7,7 @@
   {
     "type": "DWORD",
     "name": "AADWebSSOAllowed",
-    "value": 0
+    "remove": true
   },
   {
     "type": "DWORD",
@@ -37,7 +37,8 @@
   {
     "type": "DWORD",
     "name": "AllowBrowsingWithCopilot",
-    "value": 0
+    "value": 0,
+    "maxMajor": 158
   },
   {
     "type": "DWORD",
@@ -142,12 +143,12 @@
   {
     "type": "DWORD",
     "name": "CopilotMode",
-    "value": 0
+    "remove": true
   },
   {
     "type": "DWORD",
     "name": "CopilotMultitabEnabled",
-    "value": 0
+    "remove": true
   },
   {
     "type": "DWORD",
@@ -162,7 +163,7 @@
   {
     "type": "DWORD",
     "name": "CopilotPageContextEnabled",
-    "value": 0
+    "remove": true
   },
   {
     "type": "DWORD",
@@ -202,7 +203,7 @@
   {
     "type": "DWORD",
     "name": "EdgeAdminCenterEnabled",
-    "value": 0
+    "remove": true
   },
   {
     "type": "DWORD",
@@ -227,7 +228,7 @@
   {
     "type": "DWORD",
     "name": "EdgeEntraCopilotPageContextIncludesHistory",
-    "value": 0
+    "remove": true
   },
   {
     "type": "DWORD",
@@ -292,7 +293,7 @@
   {
     "type": "DWORD",
     "name": "HighEfficiencyModeEnabled",
-    "value": 0
+    "remove": true
   },
   {
     "type": "DWORD",
@@ -397,7 +398,7 @@
   {
     "type": "DWORD",
     "name": "PasswordDismissCompromisedAlertEnabled",
-    "value": 0
+    "remove": true
   },
   {
     "type": "DWORD",
