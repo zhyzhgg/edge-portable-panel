@@ -15,7 +15,6 @@ $script:panelProbeRs = $null
 $script:panelProbeHandle = $null
 $script:panelProbeTimer = $null
 $script:panelProbeDelay = $null
-$script:policyWarmTimer = $null
 $script:panelProbeDone = $false
 $script:policyKey = $env:EP_POLICY_KEY
 
@@ -509,7 +508,7 @@ $form.Add_FormClosing({
     # 打包中的 7zr 是独立进程，Kill 防孤儿继续写 .tmp
     if ($script:backupProc -and -not $script:backupProc.HasExited) { try { $script:backupProc.Kill() } catch { } }
     if ($script:policyWatch) { try { $script:policyWatch.Stop(); $script:policyWatch.Dispose() } catch { } }
-    foreach ($tm in @($script:panelProbeDelay, $script:panelProbeTimer, $script:policyWarmTimer)) { if ($tm) { try { $tm.Stop(); $tm.Dispose() } catch { } } }
+    foreach ($tm in @($script:panelProbeDelay, $script:panelProbeTimer)) { if ($tm) { try { $tm.Stop(); $tm.Dispose() } catch { } } }
     $script:panelProbeDelay = $null; $script:panelProbeTimer = $null
     if ($script:panelProbePs) { try { [void]$script:panelProbePs.BeginStop($null, $null) } catch { }; try { $script:panelProbePs.Dispose() } catch { }; $script:panelProbePs = $null }
     if ($script:panelProbeRs) { try { $script:panelProbeRs.Dispose() } catch { }; $script:panelProbeRs = $null }
@@ -2810,7 +2809,7 @@ function Open-PolicyGui {
         $fast = $false
         try {
             if ((Test-Path -LiteralPath $outPs1) -and (Test-Path -LiteralPath $upSrc)) {
-                $fast = ((Get-Item -LiteralPath $outPs1).LastWriteTime -ge (Get-Item -LiteralPath $upSrc).LastWriteTime)
+                $fast = if (Test-Path -LiteralPath $upSrc) { ((Get-Item -LiteralPath $outPs1).LastWriteTime -ge (Get-Item -LiteralPath $upSrc).LastWriteTime) } else { $true }
             }
         } catch { }
         if ($fast) {
@@ -2819,7 +2818,7 @@ function Open-PolicyGui {
                 -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $outPs1 + '"')) `
                 -WorkingDirectory $zhDir -PassThru
         } else {
-            Write-Log '启动中文策略界面（首次要翻译上游脚本，稍慢）…'
+            Write-Log '启动中文策略界面（首次需下载/翻译上游脚本，稍慢；之后会快）…'
             $useSkip = Test-Path -LiteralPath $upSrc
             $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $runZh + '"'), '-NoElevate', '-EdgeRoot', ('"' + $edgeRoot + '"'))
             if ($useSkip) { $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $runZh + '"'), '-NoElevate', '-SkipFetch', '-EdgeRoot', ('"' + $edgeRoot + '"')) }
@@ -2831,20 +2830,6 @@ function Open-PolicyGui {
     } catch { Write-Log ('启动失败：' + $_.Exception.Message) 'err' }
 }
 
-function Start-PolicyGuiWarm {
-    # 后台预热中文策略界面：生成 work\out.ps1，之后「打开策略管理」可直接拉起，UAC 更快出现
-    try {
-        if (-not (Test-Path -LiteralPath $runZh)) { return }
-        $zhDir = Split-Path $runZh -Parent
-        $outPs1 = Join-Path (Join-Path $zhDir 'work') 'out.ps1'
-        $upSrc = Join-Path $edgeRoot 'debloater-gui.ps1'
-        if (-not (Test-Path -LiteralPath $upSrc)) { return }
-        if ((Test-Path -LiteralPath $outPs1) -and ((Get-Item -LiteralPath $outPs1).LastWriteTime -ge (Get-Item -LiteralPath $upSrc).LastWriteTime)) { return }
-        $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-        Write-Log '后台预热策略管理界面（只做一次，之后打开更快）…'
-        Start-Process -FilePath $psExe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"' + $runZh + '"'), '-NoElevate', '-SkipFetch', '-DryRun', '-EdgeRoot', ('"' + $edgeRoot + '"')) -WorkingDirectory $zhDir -WindowStyle Hidden | Out-Null
-    } catch { }
-}
 
 function Start-EdgeBat([string]$fileName, [string]$label) {
     # 原样调用 Edge\ 下的上游批处理：脚本自己提权、自己跑；面板只负责拉起，不改写它们
@@ -3970,18 +3955,6 @@ Write-Log ('面板已启动；包根：' + $pkgRoot)
                     Start-PanelUpdateProbe
                 })
                 $script:panelProbeDelay.Start()
-            # 12 秒后后台预热策略管理界面（不影响启动与带宽）
-            try {
-                $script:policyWarmTimer = New-Object System.Windows.Forms.Timer
-                $script:policyWarmTimer.Interval = 12000
-                $script:policyWarmTimer.Add_Tick({
-                    try { $script:policyWarmTimer.Stop(); $script:policyWarmTimer.Dispose() } catch { }
-                    $script:policyWarmTimer = $null
-                    if ($script:noPackage -or $script:closeRequested) { return }
-                    Start-PolicyGuiWarm
-                })
-                $script:policyWarmTimer.Start()
-            } catch { }
             } catch { }
         }
         if ($RunOnce) {
