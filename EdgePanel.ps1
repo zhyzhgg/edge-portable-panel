@@ -960,7 +960,7 @@ function Get-StatusCachePath {
     return $script:statusCachePath
 }
 
-function Apply-Status([string]$payloadJson) {
+function Apply-Status([string]$payloadJson, [switch]$FromCache) {
     # 没有 Edge 包时不要把 EXE 目录的数字当状态显示（R10）
     if ($script:noPackage) {
         foreach ($l in @($valProg, $valProfile, $valDrm, $valIni, $valSlim, $valCache)) { $l.Text = '—'; $l.ForeColor = $clrMuted }
@@ -1010,7 +1010,8 @@ function Apply-Status([string]$payloadJson) {
                 }
             } catch { }
         }
-        if ($s.EdgeRunning -gt 0) {
+        # 缓存回放（启动首帧）时的 EdgeRunning 是上次的旧值，不能当实时状态报出来
+        if (-not $FromCache -and $s.EdgeRunning -gt 0) {
             Write-Log ('本包 Edge 正在运行（' + $s.EdgeRunning + ' 个进程），瘦身/清理/更新会被拒绝') 'warn'
         }
     } catch {
@@ -4196,7 +4197,7 @@ Write-Log ('面板已启动；包根：' + $pkgRoot)
             # 先用上次状态把界面填满（毫秒级），画完首帧再把 Opacity 置 1，彻底消除深色启动闪白
             $cacheFile = Get-StatusCachePath
             if (Test-Path -LiteralPath $cacheFile) {
-                try { Apply-Status ([System.IO.File]::ReadAllText($cacheFile, [System.Text.Encoding]::UTF8)) } catch { }
+                try { Apply-Status ([System.IO.File]::ReadAllText($cacheFile, [System.Text.Encoding]::UTF8)) -FromCache } catch { }
             }
             $form.Refresh()
             $form.Opacity = 1
