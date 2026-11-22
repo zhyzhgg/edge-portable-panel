@@ -11,6 +11,7 @@ $ErrorActionPreference = 'Stop'
 $script:panelVersion = '1.3.3'
 $script:panelUpdateRepo = 'zhyzhgg/edge-portable-panel'   # 自更新源（公开仓库 Releases）
 $script:panelProbePs = $null
+$script:panelProbeRs = $null
 $script:panelProbeHandle = $null
 $script:panelProbeTimer = $null
 $script:panelProbeDelay = $null
@@ -817,10 +818,12 @@ if ($maxH -lt $wantH) {
 function Write-Log([string]$text, [string]$level = 'info') {
     $t = (Get-Date).ToString('HH:mm:ss')
     $prefix = switch ($level) { 'ok' { '  OK  ' } 'warn' { ' WARN ' } 'err' { ' FAIL ' } default { ' ·    ' } }
-    $log.AppendText("[$t]$prefix$text`r`n") | Out-Null
     Write-Host ("[$t]$prefix$text")
-    $log.SelectionStart = $log.TextLength
-    $log.ScrollToCaret()
+    if ($log -and -not $log.IsDisposed) {
+        $log.AppendText("[$t]$prefix$text`r`n") | Out-Null
+        $log.SelectionStart = $log.TextLength
+        $log.ScrollToCaret()
+    }
 }
 
 function Set-Busy([bool]$busy, [string]$msg = '') {
@@ -1329,7 +1332,7 @@ function Get-RuntimeCacheDir {
     if (-not (Test-Path -LiteralPath $c)) { New-Item -ItemType Directory -Path $c -Force | Out-Null }
     return $c
 }
-function Get-PkgSnapshot([string]$edgeDir) {
+function Get-PkgSnapshot([string]$edgeDir, [string]$scope = '') {
     # 只记文件（不记目录、不记 mtime）；版本目录名归一化成 {ver}
     $map = @{}
     $verName = $null
@@ -1344,15 +1347,16 @@ function Get-PkgSnapshot([string]$edgeDir) {
         $map[$rel] = [long]$f.Length
         $sum += [long]$f.Length
     }
-    return @{ version = $verName; files = $map; total = $sum; scope = $edgeDir }
+    $normScope = if ([string]::IsNullOrWhiteSpace($scope)) { $edgeDir } else { $scope }
+    return @{ version = $verName; files = $map; total = $sum; scope = $normScope.TrimEnd('\') }
 }
 function Save-PkgSnapshot($snap, [string]$path) {
     [ordered]@{ version = $snap.version; scope = $snap.scope; taken_at = (Get-Date).ToString('s'); total_bytes = $snap.total; files = $snap.files } |
         ConvertTo-Json -Depth 4 -Compress | Set-Content -LiteralPath $path -Encoding UTF8
 }
-function Test-StructureDrift([string]$edgeDir) {
+function Test-StructureDrift([string]$edgeDir, [string]$scope = '') {
     $snapPath = Join-Path (Get-RuntimeCacheDir) 'last_pkg_snapshot.json'
-    $new = Get-PkgSnapshot $edgeDir
+    $new = Get-PkgSnapshot $edgeDir $scope
     if (-not (Test-Path -LiteralPath $snapPath)) {
         Write-Log ('结构基线：首次记录 ' + $new.files.Count + ' 个文件 / ' + [math]::Round($new.total / 1MB, 1) + ' MB（下次更新起比对）')
         return $new     # 由调用方在覆盖成功后才落盘（回滚时基线不跟着跑偏）
@@ -1365,8 +1369,8 @@ function Test-StructureDrift([string]$edgeDir) {
     }
     # 基线必须来自「同一个上游包目录」才有可比性：自测夹具、换机、换盘后路径都会变，
     # 拿旧基线硬比只会刷出一屏假的"结构变化"（实测踩到：基线是 11-21 自测用的 160.0.4408.0 假包）。
-    $oldScope = [string]$old.scope
-    if (-not $oldScope -or ($oldScope -ne $edgeDir)) {
+    $oldScope = ([string]$old.scope).TrimEnd('\')
+    if (-not $oldScope -or ($oldScope -ine $new.scope)) {
         $why = if (-not $oldScope) { '旧格式基线没有来源标记' } else { '基线来自 ' + $oldScope }
         Write-Log ('结构基线不可比对（' + $why + '），已重建（本次不比对）')
         return $new
@@ -2811,7 +2815,7 @@ function Get-LocalVersion {
 # 绝不收：*.sig（瘦身会删）、libegl/libglesv2（上游 158 包也不带）、oneauth（本地不登账号）、
 #          PdfPreview（便携包没有 shell 注册）、msedge_pwa_launcher（我们主动删）。
 $script:essentialRequired = @(
-    'msedge.exe'            # Chrome++ 启动器（自编，无签名）
+    'msedge.exe'            # 微软签名真身（由 version.dll 注入便携数据目录）
     'version.dll'           # 便携补丁本体
     'chrome++.ini'          # 便携化配置
     '{ver}\msedge.dll'      # 浏览器主体
@@ -2844,12 +2848,12 @@ function Resolve-VersionDir([string]$edgeDir) {
     return $null
 }
 
-function Sync-RootProxy([string]$edgeDir) {
+function Sync-RootProxy([string]$edgeDir, [switch]$Force) {
     # 站点应用/PWA 快捷方式指向**包根**的 msedge_proxy.exe（Chromium 按运行中 exe 的目录拼出来的），
-    # 而上游便携包根从不提供它 ⇒ 根上缺、版本目录有，就从版本目录补一份到根（版本对齐）。
-    # 返回是否真的补了（调用方不用管日志）。
+    # 而上游便携包根从不提供它 ⇒ 默认仅在根上缺失时补齐；传 -Force 时总是用版本目录的新版本刷新。
+    # 返回是否真的写入了根文件（调用方不用管日志）。
     $rootProxy = Join-Path $edgeDir 'msedge_proxy.exe'
-    if (Test-Path -LiteralPath $rootProxy) { return $false }
+    if (-not $Force -and (Test-Path -LiteralPath $rootProxy)) { return $false }
     $vd = Resolve-VersionDir $edgeDir
     if (-not $vd) { return $false }
     $src = Join-Path $vd 'msedge_proxy.exe'
@@ -3213,7 +3217,7 @@ function Invoke-UpdateNow([bool]$withSlim = $false) {
         Write-Log ('预检通过：必需 ' + $script:essentialRequired.Count + ' 项齐全，msedge.exe 签名 ' + $sigCheck.Why + '（' + (Split-Path $sigTarget -Leaf) + '）') 'ok'
         # F9：上游包结构漂移（只在这里跑；本地瘦身目录不参与比对）
         $newSnap = $null
-        try { $newSnap = Test-StructureDrift $extracted.FullName } catch { Write-Log ('结构比对失败（不阻断）：' + $_.Exception.Message) 'warn' }
+        try { $newSnap = Test-StructureDrift $extracted.FullName $pkgRoot } catch { Write-Log ('结构比对失败（不阻断）：' + $_.Exception.Message) 'warn' }
         # F8：上游包始终带 msedge_renderer.dll，而本地是用户手动删掉的 —— 每次更新提示一次（不在启动体检里反复吵）
         try {
             $rNew = if ($pre.Ver) { Join-Path (Join-Path $extracted.FullName $pre.Ver) 'msedge_renderer.dll' } else { Join-Path $extracted.FullName 'msedge_renderer.dll' }
@@ -3241,14 +3245,10 @@ function Invoke-UpdateNow([bool]$withSlim = $false) {
             return
         }
 
-        # 空间预检：暂存期间旧版与新文件会同时存在（≈旧版体积 + 新版体积）
-        $freeGB = $null
-        try {
-            $drv = Get-PSDrive -Name ($pkgRoot.Substring(0, 1)) -ErrorAction Stop
-            $freeGB = [math]::Round($drv.Free / 1GB, 1)
-        } catch { }
-        if ($freeGB -ne $null -and $freeGB -lt 1.5) {
-            throw ('可用空间不足：所在盘剩 ' + $freeGB + ' GB，更新需要约 1.5 GB 用于暂存旧版')
+        # 空间预检：暂存期间旧版与新文件会同时存在（≈旧版体积 + 新版体积）；复用 DriveInfo 避开 Get-PSDrive 卡顿
+        $freeMB = Get-DriveFreeMB $pkgRoot
+        if ($null -ne $freeMB -and $freeMB -lt 1536) {
+            throw ('可用空间不足：所在盘剩 ' + [math]::Round($freeMB / 1024, 1) + ' GB，更新需要约 1.5 GB 用于暂存旧版')
         }
 
         # ── 更新前自动备份（D8）：此时 Edge 已关闭、安装包已预检通过、还没动旧版 ──
@@ -3278,7 +3278,7 @@ try {
     $script:updateBackupOk = $false
     Write-Log ('更新前自动备份异常：' + $_.Exception.Message) 'err'
 }
-if (-not $script:updateBackupOk -and -not $dry) {
+if (-not $script:updateBackupOk -and -not $dry -and -not $RunOnce) {
     $ansB = [System.Windows.Forms.MessageBox]::Show(
         "更新前自动备份没有成功。`r`n`r`n现在跳过备份、继续更新 Edge 吗？（更新过程中数据不会被改动，但出问题时没有这次的备份可回滚）",
         '更新前备份失败', 'YesNo', 'Warning', 'Button2')
@@ -3314,6 +3314,7 @@ if (-not $script:updateBackupOk -and -not $dry) {
             $nItem = 0
             $lastPump = Get-Date
             foreach ($item in $allItems) {
+                if ($script:closeRequested) { throw '用户关闭窗口，已取消覆盖' }
                 $nItem++
                 $rel = $item.FullName.Substring($base.Length + 1)
                 $dest = Join-Path $edgeRoot $rel
@@ -3468,13 +3469,15 @@ function Set-PanelUpdateHighlight([bool]$hasNew) {
 }
 
 try {
-    $staleUpdCmd = Join-Path $env:TEMP 'edgepanel-apply-update.cmd'
-    if (Test-Path -LiteralPath $staleUpdCmd) { Remove-Item -LiteralPath $staleUpdCmd -Force -ErrorAction SilentlyContinue }
+    foreach ($staleNm in @('edgepanel-apply-update.cmd', 'edgepanel-apply-update.ps1')) {
+        $staleP = Join-Path $env:TEMP $staleNm
+        if (Test-Path -LiteralPath $staleP) { Remove-Item -LiteralPath $staleP -Force -ErrorAction SilentlyContinue }
+    }
 } catch { }
 
 function Get-PanelLatestTagRedirect {
     # 用 releases/latest 的 302 重定向拿最新 tag：**不消耗 GitHub API 配额**（匿名 API 只有 60 次/小时，
-    # 频繁检查会被 403 限流）。返回形如 '1.3.4' 的字符串；失败返回 ''。
+    # 频繁检查会被 403 限流）。返回原始 tag（如 'v1.3.4'）；失败返回 ''。
     if ([string]::IsNullOrWhiteSpace($script:panelUpdateRepo)) { return '' }
     $repoSlug = $script:panelUpdateRepo.Trim('/')
     $page = 'https://github.com/' + $repoSlug + '/releases/latest'
@@ -3519,6 +3522,7 @@ foreach ($u in @($Page, ('https://gh-proxy.org/' + $Page), ('https://ghfast.top/
         $req.UserAgent = 'EdgePanel-Probe'
         $req.AllowAutoRedirect = $false
         $req.Timeout = 8000
+        $req.ReadWriteTimeout = 8000
         $resp = $null
         try { $resp = $req.GetResponse() } catch { $resp = $_.Exception.Response }
         if ($resp) {
@@ -3748,8 +3752,16 @@ for ($i = 0; $i -lt 24; $i++) {
         # 备份只在第一轮做一次，之后不再碰它：老写法每轮「先删 .old 再重建」——
         # 一旦 $CurExe 在重试过程中被外部删掉／被独占，就会把唯一的备份也一起丢掉。
         if (-not $bakDone -and (Test-Path -LiteralPath $CurExe)) {
-            if (Test-Path -LiteralPath ($CurExe + '.old')) { Remove-Item -LiteralPath ($CurExe + '.old') -Force -ErrorAction SilentlyContinue }
-            Copy-Item -LiteralPath $CurExe -Destination ($CurExe + '.old') -Force -ErrorAction Stop
+            $bakTmp = $CurExe + '.old.tmp'
+            $bakDst = $CurExe + '.old'
+            $srcLen = (Get-Item -LiteralPath $CurExe -ErrorAction Stop).Length
+            Copy-Item -LiteralPath $CurExe -Destination $bakTmp -Force -ErrorAction Stop
+            if ((Get-Item -LiteralPath $bakTmp -ErrorAction Stop).Length -ne $srcLen) {
+                Remove-Item -LiteralPath $bakTmp -Force -ErrorAction SilentlyContinue
+                throw '旧版备份文件大小校验不一致'
+            }
+            if (Test-Path -LiteralPath $bakDst) { Remove-Item -LiteralPath $bakDst -Force -ErrorAction SilentlyContinue }
+            Move-Item -LiteralPath $bakTmp -Destination $bakDst -Force -ErrorAction Stop
             $bakDone = $true
         }
         Move-Item -LiteralPath $NewExe -Destination $CurExe -Force -ErrorAction Stop

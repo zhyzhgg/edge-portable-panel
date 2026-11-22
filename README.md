@@ -1,121 +1,92 @@
-# 便携 Edge 面板（EdgePanel）
+﻿# 便携 Edge 面板（EdgePanel）
 
-面向[便携版 Microsoft Edge](https://github.com/bibicadotnet/edge-portable-chrome-next-mini) 的单文件 Windows 管理面板。
+面向 Windows 用户的**便携版 Microsoft Edge 一键部署与运维面板**——单文件 EXE，双击即用，零外部依赖。  
+把 `EdgePanel.exe` 丢进任意空目录点一次「更新并瘦身」，就能自动完成下载、铺开、微软签名校验、结构比对与精简瘦身；已有便携包用户放进包根即可接管日常瘦身、清理、加密备份恢复、策略管理与版本更新。
 
-**C# 宿主 + 内嵌 PowerShell 5.1 WinForms，零外部运行时依赖**：一个 `EdgePanel.exe` 双击即用，不需要安装 .NET 之外的任何东西。
+> 个人开源维护工具，与 Microsoft 及上游便携打包项目无隶属关系。瘦身会删除程序目录内的非核心组件，策略会修改浏览器行为，请按需使用、风险自负。
 
-> 个人自用工具，与 Microsoft 及任何上游项目无关。瘦身会删除安装目录内的部分文件、策略会改变浏览器行为，**风险自负**。
+## 核心能力矩阵
 
-## 能做什么
-
-| 功能 | 说明 |
+| 模块 | 能力说明 |
 |---|---|
-| **瘦身** | 删约 380 项无用文件（多余语言包、Copilot 外壳、更新与通知组件、遥测与日志、诊断模板）+ 关闭组件更新；`msedge.exe` / `msedge.dll` 等核心文件一律保留 |
-| **缓存清理** | 33 项 Edge 不会自动清理的缓存（GPU/着色器/诊断指标等），9 类明确排除（书签、密码、历史、登录态、扩展本体、语言模型…） |
-| **更新本体** | 多镜像测速 → 断点续传下载 → 预检（必需件 + 签名） → `Edge\_old` 暂存 → 覆盖 → 复核 → 删旧；可选「更新并瘦身」 |
-| **备份 / 恢复** | 清理后打包 `Data\`（可选加密 + 掩藏文件名），`7zr t` + 全条目加密断言；一键恢复带 5 道护栏（只读校验、动态空间预检、关 Edge 前置、临时目录原子切换、失败回滚） |
-| **策略管理** | 130 条推荐策略（隔离在 `HKCU\...\Edge_Portable`，不污染标准分支）+ 中文策略 GUI + 漂移体检 |
-| **深色/浅色** | 跟随系统主题，支持 `EP_THEME=light|dark` 强制切换 |
+| **一键部署** | 空目录放入单文件 `EdgePanel.exe` → 点击「更新并瘦身」，自动拉取上游[便携版 Microsoft Edge](https://github.com/bibicadotnet/edge-portable-chrome-next-mini/)、铺开 `Edge\` 目录并补齐根部 `msedge_proxy.exe`（保障 PWA/站点应用快捷方式可用） |
+| **一键瘦身** | 裁撤约 380 项非核心组件（多余语言包、Copilot 外壳、更新与通知链、遥测日志、诊断模板）并关闭组件更新；上游包解出约 976.7 MB → 瘦身后程序目录约 555 MB（105 个文件），核心运行文件一律保留 |
+| **缓存清理** | 精准清理 33 项 Edge 不会自动回收的可再生缓存（GPU/着色器/诊断指标等）；书签、密码、历史记录、登录态、Cookies、扩展本体等 20 项保护名单明确排除、绝不触碰 |
+| **加密备份 / 恢复** | 清理后调用内置 7zr 打包 `Data\`（默认 AES 加密 + `-mhe=on` 隐藏文件名），支持 `7zr t` 完整性校验；一键恢复内置 5 道护栏（只读校验、动态空间预检、关 Edge 前置、同盘临时目录原子切换、失败自动回滚） |
+| **策略管理** | 内置 130 条推荐策略，写入独立隔离键 `HKCU\SOFTWARE\Policies\Microsoft\Edge_Portable`，不污染系统标准 Edge；附带中文策略管理 GUI 与策略漂移体检 |
+| **更新 Edge 本体** | 多镜像实测测速 → 断点续传下载 → 必需件与微软数字签名预检 → 上游结构漂移比对 → `Edge\_old\` 改名暂存 → 异步解压与覆盖 → 复核通过后删旧，任何步骤失败自动回滚 |
+| **面板自更新** | 启动 6 秒后后台静默探测（优先 `releases/latest` 302 重定向，零 GitHub API 配额消耗）；发现新版后顶栏按钮变绿并提示，校验 SHA256 后由独立助手进程在面板退出后完成替换与自动重启，失败自动从 `.old` 还原并拉起旧版 |
 
-## 编译
+## 快速开始（3 步）
 
-1. 把 `7zr.exe`（[7-Zip 官方](https://www.7-zip.org/a/7zr.exe)，public domain）放到 `tools\7zr.exe`；
-2. 双击 `一键编译.bat`，或运行：
+1. **下载面板**：前往本仓库 [Releases](https://github.com/zhyzhgg/edge-portable-panel/releases) 下载最新 `EdgePanel.exe` 与 `SHA256SUMS.txt`（可选校验）。
+2. **放置位置（任选其一）**：
+   - **空目录全新部署**：新建一个不含特殊权限限制的文件夹（如 `D:\App\Edge_Portable\`），只放入 `EdgePanel.exe`，双击启动后点「检查更新」→「更新并瘦身」，自动装出一套可直接运行的便携 Edge。
+   - **接管已有便携包**：把 `EdgePanel.exe` 直接放进现有便携包根目录（与 `Edge\`、`Data\` 同级），双击启动即可读取当前状态并执行瘦身、清理、备份、策略与更新。
+3. **日常维护**：面板自动跟随 Windows 深/浅色模式（也支持环境变量 `EP_THEME=light|dark` 强制指定）；所有运行时脚本与日志均落在 `%LOCALAPPDATA%\EdgePanel\`，便携包根目录保持干净。
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
-```
+## 系统要求与文件校验
 
-3. 产物是脚本同目录的 `EdgePanel.exe`。`build.ps1` 会自动校验：全部 `.ps1` 的 UTF-8 BOM、PowerShell 语法、以及版本号单源一致性（`Host.cs` 的 `ProductVersion` 必须等于 `EdgePanel.ps1` 的 `$script:panelVersion`）。
-
-编译需要 Windows 自带的 .NET Framework 4.0 `csc.exe`（无需安装 SDK）。
-
-## 部署
-
-把 `EdgePanel.exe` 放到便携包根目录（与 `Edge\`、`Data\` 同级）双击即可。
-
-> **杀软提示**：本程序是"自解包 + 拉起 PowerShell"的结构，加上自更新会下载并替换自身，容易被启发式引擎误判。若被拦截，请加入信任列表。
-
-## 自更新
-
-面板顶栏有「更新面板」按钮：有新版变绿（文案变「有新版本」），点击后走国内镜像下载并校验 SHA256，再替换自身。
-
-它读取的是**本仓库的 Releases**，源地址写在 `EdgePanel.ps1` 顶部：
-
-```powershell
-$script:panelUpdateRepo = '<owner>/<repo>'
-```
-
-**公开仓库不需要任何令牌**：查 Release、下载资产都是匿名 HTTPS。
-
-## 发布流程（维护者）
-
-发新版按这个顺序走，**第 4 步和第 5 步不要颠倒**，否则会出现「Release 里的 EXE 是新的、仓库源码还是旧的」。
-
-1. **改代码**（`EdgePanel.ps1` 等）；
-2. **提升版本**：`powershell -NoProfile -File .\build.ps1 -Bump`
-   - 只自动改 `build\Host.cs` 的 `ResourceVersion`（解包目录键）；
-   - **`ProductVersion` 与 `EdgePanel.ps1` 顶部的 `$script:panelVersion` 要手动保持一致**，`build.ps1` 编译前会校验，不一致直接报错。
-3. **编译到中立文件名，再改名**（重要）：
-
-```powershell
-.\build.ps1 -Bump -Out 'D:\tmp\ep_build.exe'
-Copy-Item 'D:\tmp\ep_build.exe' '<便携包根>\EdgePanel.exe' -Force
-```
-
-   为什么绕这一下：部分杀软（如火绒）会对「`csc.exe` 直接写出名为 `EdgePanel.exe` 的新 PE」做泛特征拦截并**当场删除**。用中立文件名产出再复制过去就不会触发。
-4. **先推源码**：
-
-```powershell
-git add -A
-git commit -m "feat: ..."
-git push origin main
-```
-
-   若 `git push` 报 `schannel: failed to receive handshake`（部分环境 TLS 受限），加一次性参数：
-
-```powershell
-git -c http.sslBackend=openssl push origin main
-```
-
-5. **再发 Release**：tag 必须与 `$script:panelVersion` 同号（例如 `v1.3.4`），附件固定两个名字：
-
-   - `EdgePanel.exe`（第 3 步的产物）
-   - `SHA256SUMS.txt`（`Get-FileHash .\EdgePanel.exe -Algorithm SHA256` 的结果 + 两空格 + 文件名）
-
-6. **面板端不用改**：它启动 6 秒后静默探测、或点顶栏「更新面板」，发现新 tag 就把按钮变绿并弹窗提示；下载地址按约定拼 `releases/download/<tag>/EdgePanel.exe`，校验 `SHA256SUMS.txt` 后替换自身。
-
-**查版本用的是 `releases/latest` 的 302 重定向**，不消耗 GitHub API 配额（匿名 API 只有 60 次/小时，频繁检查会被 403 限流；只有重定向失败时才退回 API）。
-## 校验下载的文件
+- **系统要求**：Windows 10 / Windows 11（64 位），仅依赖系统自带的 **.NET Framework 4.0** 与 **Windows PowerShell 5.1**，无需安装任何运行库或外部模块。
+- **SHA256 校验**：下载后可在 PowerShell 中核对哈希是否与 Release 附件 `SHA256SUMS.txt` 一致：
 
 ```powershell
 Get-FileHash .\EdgePanel.exe -Algorithm SHA256
 ```
 
-与 Release 附带的 `SHA256SUMS.txt` 比对。
+## 杀软误报说明
 
-## 目录结构
+本工具采用 **C# 单文件自解包宿主 + 拉起 PowerShell 5.1 WinForms** 架构，内置官方 7-Zip `7zr.exe` 且带有自更新替换逻辑，属于无数字签名的开源单文件 EXE，容易被部分杀毒软件（如火绒、Windows Defender 等）的通用启发式引擎误判为 `Trojan/Agent.*`。
 
-```
-EdgePanel.ps1              主脚本（UI + 全部业务逻辑）
-_Common.ps1                公共函数
-EdgeTune.ps1               瘦身
-Clean-EdgeCaches.ps1       缓存清理
-EdgePolicyBaseline.json    策略基线（130 主 + 2 子）
-build\Host.cs              单文件 EXE 宿主（解包到 %LOCALAPPDATA% 后拉起 PowerShell）
-build.ps1 / 一键编译.bat    构建
-tools\ui-audit.ps1         GUI 几何体检（UI Automation 量控件矩形，判越界/贴边/重叠）
-zh-debloater\              策略 GUI 的中文启动器 / 翻译器 / 词库
-docs\                      GUI 规范、便携化与原版的差异说明
-```
+- 全部源码公开可审，无任何第三方闭源载荷或后台上报。
+- 若遇到拦截或误删，请将便携包目录加入杀软信任区并顺手上报误报；也可直接拉取源码在本地运行 `一键编译.bat` 自行编译。
+
+## 更新机制与版本号约定
+
+- **单源版本对齐**：公开仓库的 Release Tag、源码 `EdgePanel.ps1` 的 `$script:panelVersion` 与 `build\Host.cs` 的 `ProductVersion` 严格保持一致（例如 `v1.3.3` ↔ `'1.3.3'` ↔ `"v1.3.3"`），`build.ps1` 编译前自动强校验。
+- **同版本号热修说明**：自更新仅比对语义化版本号（`v1.3.3` → `v1.3.4`）。若某次小修以“附件热修”方式直接替换当前 Release 的 `EdgePanel.exe`（未升版本号），已安装同版本号的用户不会收到自动弹窗，需手动重新下载覆盖；正式升级版本号（如发布 `v1.3.4`）后旧版面板会自动探测提示。
+- **零配额探测**：版本检查优先走 `releases/latest` 的 302 跳转提取 `Location` 中的 Tag，不消耗 GitHub 匿名 API 配额（60 次/小时），仅在重定向失败时回退至 Release API 与国内镜像代理。
 
 ## 已知限制
 
-- 主窗口固定 888×723，**不做 DPI 自动缩放**（坐标按 DPI 手动乘）；
-- 深色模式下系统原生 `MessageBox` 仍是浅色（WinForms 平台限制）；
-- 恢复数据前必须关闭 Edge（会持有 profile 锁文件）；
-- 只支持单机单用户，不支持多机同步（备份上传未实现）。
+- 主窗口客户区固定 `870×676`（外形约 `888×723`）紧凑布局，不做 WinForms 自动 DPI 缩放（高分屏如需等比放大，可设置环境变量 `EP_UI_SCALE=1.25`）。
+- 深色模式下系统原生 `MessageBox` 弹窗仍保持 Windows 浅色外观（WinForms 平台限制）。
+- 仅面向单机单用户本地维护，暂不提供云端多机同步（换机请使用「清理并备份」+「从备份恢复」）。
+- 恢复数据或更新本体前必须关闭当前便携包的 Edge 进程（避免 Profile 锁文件占用）。
+
+## 免责声明
+
+- 「瘦身」会删除 `Edge\` 版本目录内约 380 项非核心文件；若后续需要某些被裁功能，可随时点「下载并更新」恢复完整程序文件。
+- 「应用推荐策略」会向当前用户注册表写入 130 条隔离策略，可能改变自动填充、侧边栏、Copilot 等浏览器默认行为；可随时在「打开策略管理」中逐项调整或一键还原。
+- 重要数据请定期执行加密备份并妥善保管密码（密码丢失无法解开加密备份包）。
+
+## 从源码构建（3 步）
+
+1. 下载 [7-Zip 官方 7zr.exe](https://www.7-zip.org/a/7zr.exe)（Public Domain），放到仓库 `tools\7zr.exe`。
+2. 双击 `一键编译.bat`，或在仓库目录执行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
+```
+
+3. `build.ps1` 会自动完成全部 `.ps1` 的 UTF-8 BOM 预检、PowerShell 5.1 语法解析与三方版本号校验，并调用系统自带 `.NET Framework 4.0 csc.exe` 在本目录输出单文件 EXE。
+
+## 发布流程（维护者）
+
+发版请严格遵循**先推源码、再发 Release**，避免 Release 产物与仓库源码脱节：
+
+1. 修改代码并同步版本号：改内容务必递增解包键（`.\build.ps1 -Bump`）；若发新版本，需同步更新 `EdgePanel.ps1` 的 `$script:panelVersion` 与 `build\Host.cs` 的 `ProductVersion`。
+2. **中立文件名编译后再复制**（规避杀软拦截 `csc.exe` 直写运行目录）：
+
+```powershell
+.\build.ps1 -Bump -Out 'D:\tmp\ep_build.exe'
+Copy-Item 'D:\tmp\ep_build.exe' '<发布暂存目录>\EdgePanel.exe' -Force
+Get-FileHash '<发布暂存目录>\EdgePanel.exe' -Algorithm SHA256
+```
+
+3. 先提交并推送源码到 `main`（若遇 `schannel` TLS 握手失败，可加 `git -c http.sslBackend=openssl push origin main`）。
+4. 创建与 `$script:panelVersion` 一致的 Git Tag（如 `v1.3.4`）并发布 Release，附件固定命名为 **`EdgePanel.exe`** 与 **`SHA256SUMS.txt`**（格式：`<64位十六进制哈希>  EdgePanel.exe`）。
 
 ## 许可
 
-代码：[MIT](LICENSE)。第三方依赖与上游项目见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+本仓库代码基于 [MIT](LICENSE) 许可开源；第三方组件与上游项目说明见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
