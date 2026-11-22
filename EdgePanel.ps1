@@ -15,6 +15,7 @@ $script:panelProbeRs = $null
 $script:panelProbeHandle = $null
 $script:panelProbeTimer = $null
 $script:panelProbeDelay = $null
+$script:policyWarmTimer = $null
 $script:panelProbeDone = $false
 $script:policyKey = $env:EP_POLICY_KEY
 
@@ -508,7 +509,7 @@ $form.Add_FormClosing({
     # 打包中的 7zr 是独立进程，Kill 防孤儿继续写 .tmp
     if ($script:backupProc -and -not $script:backupProc.HasExited) { try { $script:backupProc.Kill() } catch { } }
     if ($script:policyWatch) { try { $script:policyWatch.Stop(); $script:policyWatch.Dispose() } catch { } }
-    foreach ($tm in @($script:panelProbeDelay, $script:panelProbeTimer)) { if ($tm) { try { $tm.Stop(); $tm.Dispose() } catch { } } }
+    foreach ($tm in @($script:panelProbeDelay, $script:panelProbeTimer, $script:policyWarmTimer)) { if ($tm) { try { $tm.Stop(); $tm.Dispose() } catch { } } }
     $script:panelProbeDelay = $null; $script:panelProbeTimer = $null
     if ($script:panelProbePs) { try { [void]$script:panelProbePs.BeginStop($null, $null) } catch { }; try { $script:panelProbePs.Dispose() } catch { }; $script:panelProbePs = $null }
     if ($script:panelProbeRs) { try { $script:panelProbeRs.Dispose() } catch { }; $script:panelProbeRs = $null }
@@ -1542,12 +1543,11 @@ function Start-PolicyWatch {
         # 分两类说明：A=上游完全没有这一项（无开关，只能被清键误删）；B=上游有开关/下拉（默认值与推荐值相同）
         $noUi = @($bad | Where-Object { $script:upstreamUiPolicies -notcontains $_ })
         $hasUi = @($bad | Where-Object { $script:upstreamUiPolicies -contains $_ })
-        $why = ''
-        if ($noUi.Count -gt 0) { $why += ("`r`n`r`n" + ($noUi -join '、') + "：上游工具里完全没有这一项（没有开关），只能被「清空策略键再重写」误删。") }
-        if ($hasUi.Count -gt 0) { $why += ("`r`n`r`n" + ($hasUi -join '、') + "：上游工具里有对应开关/下拉（默认值与本面板推荐值相同）；如果你刚在上游主动关掉了它们，选「暂不」即可。") }
-        $msg = ("上游策略管理工具会先清空策略键再按勾选重写，导致下面 " + $bad.Count + " 条推荐策略与基线不一致：`r`n`r`n" + ($bad -join '、') + $why +
-                "`r`n`r`n现在只补回这几条吗？（只写这些值，不会动你在策略面板里的其它修改；需点一次 UAC）")
-        if (Show-DialogAsk '专属策略被删' $msg ('补回这 ' + $bad.Count + ' 条') '暂不') {
+        $why2 = @()
+        if ($noUi.Count -gt 0) { $why2 += ('· ' + ($noUi -join '、') + ' —— 上游没有这个开关，必被删掉') }
+        if ($hasUi.Count -gt 0) { $why2 += ('· ' + ($hasUi -join '、') + ' —— 上游有开关；若是你刚在上面主动关的，选「不用了」即可') }
+        $msg = ("上游策略管理工具重写策略时，下面这些没被写回来：`r`n`r`n" + ($why2 -join "`r`n") + "`r`n`r`n现在补回吗？（只写这几条，其它策略不动；会弹一次 UAC）")
+        if (Show-DialogAsk '策略被上游工具删了' $msg '补回' '不用了') {
             [void](Restore-ExtraPolicies $bad)
         } else {
             Write-Log '这次先不补回；下次打开面板还会提示。' 'warn'
@@ -2793,22 +2793,57 @@ function Invoke-Action([string]$kind) {
 
 function Open-PolicyGui {
     if (-not (Test-Path $runZh)) { Write-Log ('找不到 ' + $runZh) 'err'; return }
-    Write-Log '启动中文策略界面（独立进程；需要管理员权限时由它自行处理）…'
     try {
         $env:EP_THEME = if ($script:isDark) { 'dark' } else { 'light' }
-        # 关键：上游策略 GUI 会自己提权重启，环境变量在提权后丢失 ⇒ 再写一份跨提权可读的主题文件
+        # 上游策略 GUI 会自己提权重启，环境变量在提权后丢失 ⇒ 再写一份跨提权可读的主题文件
         try {
             $themeDir = Join-Path $env:LOCALAPPDATA 'EdgePanel\cache'
             if (-not (Test-Path -LiteralPath $themeDir)) { New-Item -ItemType Directory -Path $themeDir -Force | Out-Null }
             [ordered]@{ theme = [string]$env:EP_THEME; updated = (Get-Date).ToString('s') } |
                 ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $themeDir 'ui-theme.json') -Encoding UTF8
         } catch { Write-Log ('主题文件写入失败（策略窗口可能跟随系统色）：' + $_.Exception.Message) 'warn' }
-        # 含路径的元素自己加引号：-ArgumentList 不会替你加，包根／脚本路径带空格时会被拆成两个参数
-        Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
-            -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $runZh + '"'), '-NoElevate', '-EdgeRoot', ('"' + $edgeRoot + '"')) -WorkingDirectory (Split-Path $runZh -Parent) -WindowStyle Hidden -PassThru | ForEach-Object { $script:policyGuiProc = $_; $script:policyGuiStarted = Get-Date }
+        $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        $zhDir = Split-Path $runZh -Parent
+        $outPs1 = Join-Path (Join-Path $zhDir 'work') 'out.ps1'
+        $upSrc = Join-Path $edgeRoot 'debloater-gui.ps1'
+        # 快路径：中文副本已生成且不比上游脚本旧 ⇒ 直接拉起它，省掉"下载 + 翻译 + 一次冷启动"
+        $fast = $false
+        try {
+            if ((Test-Path -LiteralPath $outPs1) -and (Test-Path -LiteralPath $upSrc)) {
+                $fast = ((Get-Item -LiteralPath $outPs1).LastWriteTime -ge (Get-Item -LiteralPath $upSrc).LastWriteTime)
+            }
+        } catch { }
+        if ($fast) {
+            Write-Log '启动中文策略界面（已预热，直接拉起）…'
+            $script:policyGuiProc = Start-Process -FilePath $psExe `
+                -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $outPs1 + '"')) `
+                -WorkingDirectory $zhDir -PassThru
+        } else {
+            Write-Log '启动中文策略界面（首次要翻译上游脚本，稍慢）…'
+            $useSkip = Test-Path -LiteralPath $upSrc
+            $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $runZh + '"'), '-NoElevate', '-EdgeRoot', ('"' + $edgeRoot + '"'))
+            if ($useSkip) { $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $runZh + '"'), '-NoElevate', '-SkipFetch', '-EdgeRoot', ('"' + $edgeRoot + '"')) }
+            $script:policyGuiProc = Start-Process -FilePath $psExe -ArgumentList $a -WorkingDirectory $zhDir -WindowStyle Hidden -PassThru
+        }
+        $script:policyGuiStarted = Get-Date
         Write-Log '已拉起策略界面' 'ok'
-          try { Start-PolicyWatch } catch { }   # 只读监听那 4 条专属推荐策略
+        try { Start-PolicyWatch } catch { }   # 只读监听那几条专属推荐策略
     } catch { Write-Log ('启动失败：' + $_.Exception.Message) 'err' }
+}
+
+function Start-PolicyGuiWarm {
+    # 后台预热中文策略界面：生成 work\out.ps1，之后「打开策略管理」可直接拉起，UAC 更快出现
+    try {
+        if (-not (Test-Path -LiteralPath $runZh)) { return }
+        $zhDir = Split-Path $runZh -Parent
+        $outPs1 = Join-Path (Join-Path $zhDir 'work') 'out.ps1'
+        $upSrc = Join-Path $edgeRoot 'debloater-gui.ps1'
+        if (-not (Test-Path -LiteralPath $upSrc)) { return }
+        if ((Test-Path -LiteralPath $outPs1) -and ((Get-Item -LiteralPath $outPs1).LastWriteTime -ge (Get-Item -LiteralPath $upSrc).LastWriteTime)) { return }
+        $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        Write-Log '后台预热策略管理界面（只做一次，之后打开更快）…'
+        Start-Process -FilePath $psExe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"' + $runZh + '"'), '-NoElevate', '-SkipFetch', '-DryRun', '-EdgeRoot', ('"' + $edgeRoot + '"')) -WorkingDirectory $zhDir -WindowStyle Hidden | Out-Null
+    } catch { }
 }
 
 function Start-EdgeBat([string]$fileName, [string]$label) {
@@ -3935,6 +3970,18 @@ Write-Log ('面板已启动；包根：' + $pkgRoot)
                     Start-PanelUpdateProbe
                 })
                 $script:panelProbeDelay.Start()
+            # 12 秒后后台预热策略管理界面（不影响启动与带宽）
+            try {
+                $script:policyWarmTimer = New-Object System.Windows.Forms.Timer
+                $script:policyWarmTimer.Interval = 12000
+                $script:policyWarmTimer.Add_Tick({
+                    try { $script:policyWarmTimer.Stop(); $script:policyWarmTimer.Dispose() } catch { }
+                    $script:policyWarmTimer = $null
+                    if ($script:noPackage -or $script:closeRequested) { return }
+                    Start-PolicyGuiWarm
+                })
+                $script:policyWarmTimer.Start()
+            } catch { }
             } catch { }
         }
         if ($RunOnce) {
