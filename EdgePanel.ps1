@@ -2862,6 +2862,19 @@ function Open-PolicyGui {
             }
         } catch { }
         if ($fast) {
+            # 快路径跳过 run-zh，所以它那步「复制 chrome++.ini」要在这里补上：
+            # out.ps1 靠同目录的 chrome++.ini 读 policy_key，过期会导致策略读写到错误的键
+            try {
+                $iniSrc = Join-Path $edgeRoot 'chrome++.ini'
+                if (Test-Path -LiteralPath $iniSrc) {
+                    $iniDst = Join-Path (Split-Path $outPs1 -Parent) 'chrome++.ini'
+                    $needCopy = $true
+                    if (Test-Path -LiteralPath $iniDst) {
+                        $needCopy = ((Get-Item -LiteralPath $iniSrc).LastWriteTime -gt (Get-Item -LiteralPath $iniDst).LastWriteTime)
+                    }
+                    if ($needCopy) { Copy-Item -LiteralPath $iniSrc -Destination $iniDst -Force }
+                }
+            } catch { Write-Log ('chrome++.ini 同步失败（策略键可能不对）：' + $_.Exception.Message) 'warn' }
             Write-Log '启动中文策略界面（快路径直接提权拉起，请在 UAC 中点「是」）…'
             $script:policyGuiProc = Start-Process -FilePath $psExe `
                 -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"' + $outPs1 + '"')) `
