@@ -1523,9 +1523,16 @@ function Test-StructureDrift([string]$edgeDir, [string]$scope = '') {
 # ---------------- F3：策略漂移体检（注册表 vs 内嵌基线） ----------------
 function Get-PolicyDrift {
     # 基线（JSON 数组：[{type,name,value} | {type,sub,name,value}]）→ 扁平字典
+    # 过滤口径必须与 Apply-RecommendedPolicies 的 $activeRecs/$dropRecs 一致：
+    #   ① remove 条目（将来若启用）本就不该写、也不该期望它存在；
+    #   ② maxMajor 已超期的条目（如 AllowBrowsingWithCopilot 对 Edge 159+）既不再写入，
+    #      也不该报"缺失"——否则 Edge 升级后每次开面板都红字误报，且点「应用推荐策略」
+    #      删掉它之后又立刻报缺失，陷入死循环。
+    $curMajor = Get-EdgeMajorVersion $pkgRoot
     $flatBase = @{}
     foreach ($e in $script:baseline) {
         if (-not $e) { continue }
+        if ($e.remove -or ($e.maxMajor -and $curMajor -gt 0 -and $curMajor -gt [int]$e.maxMajor)) { continue }
         $k = if ($e.sub) { [string]$e.sub + '\' + [string]$e.name } else { [string]$e.name }
         $flatBase[$k] = $e.value
     }
