@@ -8,7 +8,7 @@
 #>
 
 $ErrorActionPreference = 'Stop'
-$script:panelVersion = '1.3.4'
+$script:panelVersion = '1.3.5'
 $script:panelUpdateRepo = 'zhyzhgg/edge-portable-panel'   # 自更新源（公开仓库 Releases）
 $script:panelProbePs = $null
 $script:panelProbeRs = $null
