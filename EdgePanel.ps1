@@ -1233,26 +1233,9 @@ function Update-Status {
     }
 }
 
-function Save-PolicySnapshot([int]$keep = 5) {
-    # 写入策略前只读导出当前策略键快照（无需提权，几 KB），便于随时回滚
-    try {
-        $regPath = $script:policyKey -replace '^HKCU:', 'HKCU'
-        if (-not (Test-Path -LiteralPath $script:policyKey)) { return }
-        $snapDir = Join-Path (Get-RuntimeCacheDir) 'policy-snapshots'
-        if (-not (Test-Path -LiteralPath $snapDir)) { New-Item -ItemType Directory -Path $snapDir -Force | Out-Null }
-        $snapFile = Join-Path $snapDir ('policy_' + (Get-Date).ToString('yyyyMMdd-HHmmss') + '.reg')
-        & reg.exe export $regPath $snapFile /y 2>&1 | Out-Null
-        if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $snapFile)) {
-            Write-Log ('已自动保存策略快照：' + (Split-Path $snapFile -Leaf))
-            $all = @(Get-ChildItem -LiteralPath $snapDir -Filter 'policy_*.reg' -File -ErrorAction SilentlyContinue | Sort-Object Name -Descending)
-            if ($all.Count -gt $keep) { $all | Select-Object -Skip $keep | Remove-Item -Force -ErrorAction SilentlyContinue }
-        }
-    } catch { Write-Log ('策略快照导出失败（不阻断写入）：' + $_.Exception.Message) 'warn' }
-}
 
 function Import-PolicyReg([string]$regFile, [string]$okLog = '策略导入完成') {
-    # 唯一实现：先留只读快照，再经 UAC helper 导入策略键并解析结果（策略键对普通用户只读，必须提权）
-    Save-PolicySnapshot
+    # 唯一实现：经 UAC helper 导入策略键并解析结果（策略键对普通用户只读，必须提权）
     $stamp = (Get-Date).ToString('HHmmssfff')
     $helper = Join-Path $env:TEMP ('edgepanel-import-' + $stamp + '.ps1')
     $result = Join-Path $env:TEMP ('edgepanel-import-result-' + $stamp + '.txt')
