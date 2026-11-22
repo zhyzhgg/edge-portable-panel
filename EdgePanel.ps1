@@ -1185,11 +1185,10 @@ function Set-SlimAllState([bool]$allDone) {
 }
 
 function Confirm-Action([string]$title, [string]$message) {
-    # 二次确认：自测模式（-RunOnce）不弹窗，直接放行
-    if ($RunOnce) { return $true }
-    $ans = [System.Windows.Forms.MessageBox]::Show($message, $title, 'YesNo', 'Warning')
-    return ($ans -eq 'Yes')
+    # 统一走自绘深色确认框（确定=绿色 primary）；-RunOnce 自测直接放行
+    return (Show-DialogAsk $title $message '确定' '取消')
 }
+
 
 function Update-StatusAsync {
     # 状态与缓存体积都在后台算，界面不再"顿一下"
@@ -1238,6 +1237,53 @@ function Update-Status {
     }
 }
 
+function Import-PolicyReg([string]$regFile, [string]$okLog = '策略导入完成') {
+    # 唯一实现：把 .reg 经 UAC helper 导入策略键并解析结果（策略键对普通用户只读，必须提权）
+    $stamp = (Get-Date).ToString('HHmmssfff')
+    $helper = Join-Path $env:TEMP ('edgepanel-import-' + $stamp + '.ps1')
+    $result = Join-Path $env:TEMP ('edgepanel-import-result-' + $stamp + '.txt')
+    $helperCode = @'
+param([string]$RegFile, [string]$ResultFile, [string]$KeyPath)
+$lines = New-Object System.Collections.Generic.List[string]
+try {
+    $out2 = & reg.exe import $RegFile 2>&1
+    if ($LASTEXITCODE -eq 0) { $lines.Add('RESULT: OK') }
+    else { $lines.Add('RESULT: FAIL ' + (($out2 | Out-String).Trim())) }
+} catch {
+    $lines.Add('RESULT: FAIL ' + $_.Exception.Message)
+} finally {
+    [System.IO.File]::WriteAllLines($ResultFile, $lines, (New-Object System.Text.UTF8Encoding($true)))
+}
+'@
+    [System.IO.File]::WriteAllText($helper, $helperCode, (New-Object System.Text.UTF8Encoding($true)))
+    if (Test-Path -LiteralPath $result) { Remove-Item -LiteralPath $result -Force -ErrorAction SilentlyContinue }
+    Write-Log '正在请求管理员权限（UAC）以写入策略键…'
+    try {
+        $psi = @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $helper + '"'),
+            '-RegFile', ('"' + $regFile + '"'), '-ResultFile', ('"' + $result + '"'),
+            '-KeyPath', ('"' + ($script:policyKey -replace '^HKCU:', 'HKCU') + '"')
+        )
+        Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
+            -ArgumentList $psi -Verb RunAs -WindowStyle Hidden -Wait | Out-Null
+    } catch {
+        Write-Log ('已取消（UAC 未确认）：' + $_.Exception.Message) 'warn'
+        Remove-Item -LiteralPath $helper, $regFile -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+    $ok = $false
+    if (-not (Test-Path -LiteralPath $result)) {
+        Write-Log '没有拿到导入结果，请检查 UAC 是否被拒绝' 'err'
+    } else {
+        foreach ($line in [System.IO.File]::ReadAllLines($result, [System.Text.Encoding]::UTF8)) {
+            if ($line -like 'RESULT: OK*') { Write-Log $okLog 'ok'; $ok = $true }
+            elseif ($line -like 'RESULT: FAIL*') { Write-Log ('策略导入失败：' + $line.Substring(13).Trim()) 'err' }
+        }
+    }
+    Remove-Item -LiteralPath $helper, $result, $regFile -Force -ErrorAction SilentlyContinue
+    return $ok
+}
+
 function Apply-RecommendedPolicies {
     # 把内嵌的推荐策略基线写成临时 .reg，经 UAC helper 直接写注册表（条数以基线文件为准）
     $baselineFile = Join-Path $scriptsDir 'EdgePolicyBaseline.json'
@@ -1276,49 +1322,8 @@ function Apply-RecommendedPolicies {
     }
     [System.IO.File]::WriteAllLines($regFile, $out, [System.Text.Encoding]::Unicode)
 
-    # 经 UAC helper 直接写注册表（策略键对普通用户只读）
-    $helper = Join-Path $env:TEMP 'edgepanel-import.ps1'
-    $result = Join-Path $env:TEMP 'edgepanel-import-result.txt'
-    $helperCode = @'
-param([string]$RegFile, [string]$ResultFile, [string]$KeyPath)
-$lines = New-Object System.Collections.Generic.List[string]
-try {
-    $out2 = & reg.exe import $RegFile 2>&1
-    if ($LASTEXITCODE -eq 0) { $lines.Add('RESULT: OK') }
-    else { $lines.Add('RESULT: FAIL ' + (($out2 | Out-String).Trim())) }
-} catch {
-    $lines.Add('RESULT: FAIL ' + $_.Exception.Message)
-} finally {
-    [System.IO.File]::WriteAllLines($ResultFile, $lines, (New-Object System.Text.UTF8Encoding($true)))
-}
-'@
-    [System.IO.File]::WriteAllText($helper, $helperCode, (New-Object System.Text.UTF8Encoding($true)))
-    if (Test-Path -LiteralPath $result) { Remove-Item -LiteralPath $result -Force -ErrorAction SilentlyContinue }
-
-    Write-Log '正在请求管理员权限（UAC）以写入策略键…'
-    try {
-        # Start-Process -ArgumentList 的数组元素**不会自动加引号**（PS 5.1.26100 与 7 实测一致）：
-        # 含空格的路径会被命令行拆成两个参数、后续参数整体错位 ⇒ 含路径的元素必须自己包一层双引号。
-        $psi = @(
-            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $helper + '"'),
-            '-RegFile', ('"' + $regFile + '"'), '-ResultFile', ('"' + $result + '"'),
-            '-KeyPath', ('"' + ($script:policyKey -replace '^HKCU:', 'HKCU') + '"')
-        )
-        Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
-            -ArgumentList $psi -Verb RunAs -WindowStyle Hidden -Wait | Out-Null
-    } catch {
-        Write-Log ('已取消（UAC 未确认）：' + $_.Exception.Message) 'warn'
-        return
-    }
-
-    if (-not (Test-Path -LiteralPath $result)) { Write-Log '没有拿到导入结果，请检查 UAC 是否被拒绝' 'err'; return }
-    $ok = $false
-    foreach ($line in [System.IO.File]::ReadAllLines($result, [System.Text.Encoding]::UTF8)) {
-        if ($line -like 'RESULT: OK*') { Write-Log '推荐策略应用完成' 'ok'; $ok = $true }
-        elseif ($line -like 'RESULT: FAIL*') { Write-Log ('推荐策略应用失败：' + $line.Substring(13).Trim()) 'err' }
-    }
-    Remove-Item -LiteralPath $helper, $result -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $regFile -Force -ErrorAction SilentlyContinue
+    # 复用统一的导入入口（UAC helper 与结果解析只有一份实现）
+    $ok = Import-PolicyReg $regFile '推荐策略应用完成'
     if ($ok) { Write-Log '完全退出 Edge 再打开才生效。' 'warn'; try { Show-PolicyDrift } catch { } }
     Update-PolicyCount
 }
@@ -1456,6 +1461,8 @@ $script:extraOnlyPolicies = @(
     'TrackingPrevention',
     'NewTabPageAllowedBackgroundTypes'
 )
+$script:policyGuiProc = $null
+$script:policyGuiStarted = $null
 $script:policyWatch = $null
 $script:policyWatchHits = 0
 $script:policyWatchDeadline = $null
@@ -1474,35 +1481,69 @@ function Get-ExtraPolicyDrift {
     return $bad
 }
 
+function Restore-ExtraPolicies([string[]]$names) {
+    # 只补这几条「专属策略」（不碰其它键值）：生成只含它们的 .reg，复用 Import-PolicyReg
+    if (-not $names -or @($names).Count -eq 0) { return $false }
+    $baselineFile = Join-Path $scriptsDir 'EdgePolicyBaseline.json'
+    if (-not (Test-Path -LiteralPath $baselineFile)) { Write-Log ('找不到策略基线：' + $baselineFile) 'err'; return $false }
+    $all = $null
+    try { $all = [System.IO.File]::ReadAllText($baselineFile, [System.Text.Encoding]::UTF8) | ConvertFrom-Json } catch { Write-Log ('策略基线解析失败：' + $_.Exception.Message) 'err'; return $false }
+    $picked = @($all | Where-Object { -not $_.sub -and (@($names) -contains [string]$_.name) })
+    if ($picked.Count -eq 0) { Write-Log '基线里找不到要补的条目，已跳过' 'warn'; return $false }
+    $regFile = Join-Path $env:TEMP ('edgepanel-extra-policies-' + (Get-Date).ToString('HHmmss') + '.reg')
+    $out = New-Object System.Collections.Generic.List[string]
+    $out.Add('Windows Registry Editor Version 5.00')
+    $out.Add('')
+    $out.Add('; 只补专属策略 ' + $picked.Count + ' 条 —— 便携 Edge 面板 v' + $script:panelVersion)
+    $out.Add('[' + $script:policyKeyPlain + ']')
+    foreach ($r in $picked) {
+        if ($r.type -eq 'DWORD') { $out.Add(('"{0}"=dword:{1:x8}' -f [string]$r.name, [int]$r.value)) }
+        else { $out.Add(('"{0}"="{1}"' -f [string]$r.name, ([string]$r.value -replace '"', '\"'))) }
+    }
+    [System.IO.File]::WriteAllLines($regFile, $out, [System.Text.Encoding]::Unicode)
+    $ok = Import-PolicyReg $regFile ('已恢复 ' + $picked.Count + ' 条专属策略')
+    if ($ok) { try { Update-PolicyCount } catch { } }
+    return $ok
+}
 function Start-PolicyWatch {
-    # 打开上游策略 GUI 后开表：每 5 秒只读检查那 4 条；连续 3 次异常（≈15 秒）才提醒一次
+    # 打开上游策略 GUI 后开表：每 1 秒只读检查那 4 条专属策略；
+    # 等上游窗口退出后再判（不盖在它界面上），连续 2 次缺失（≈2 秒）即提示。
     try {
         if ($script:policyWatch) { $script:policyWatch.Stop(); $script:policyWatch.Dispose() }
     } catch { }
     $script:policyWatchHits = 0
     $script:policyWatchDeadline = (Get-Date).AddMinutes(30)
     $script:policyWatch = New-Object System.Windows.Forms.Timer
-    $script:policyWatch.Interval = 5000
+    $script:policyWatch.Interval = 1000
     $script:policyWatch.Add_Tick({
         if ($script:closeRequested -or $form.IsDisposed) { $script:policyWatch.Stop(); return }
-        if ($script:isBusy) { return }   # 长任务（更新/备份）进行中不弹模态框打断
+        if ($script:isBusy) { $script:policyWatchHits = 0; return }
         if ((Get-Date) -gt $script:policyWatchDeadline) { $script:policyWatch.Stop(); return }
+        $guiGone = $true
+        try { if ($script:policyGuiProc -and -not $script:policyGuiProc.HasExited) { $guiGone = $false } } catch { }
+        if (-not $guiGone) {
+            try { if ($script:policyGuiStarted -and ((Get-Date) - $script:policyGuiStarted).TotalSeconds -gt 90) { $guiGone = $true } } catch { }
+        }
+        if (-not $guiGone) { $script:policyWatchHits = 0; return }
         $bad = @()
         try { $bad = @(Get-ExtraPolicyDrift) } catch { }
         if ($bad.Count -eq 0) { $script:policyWatchHits = 0; return }
         $script:policyWatchHits++
-        if ($script:policyWatchHits -lt 3) { return }
+        if ($script:policyWatchHits -lt 2) { return }
         $script:policyWatch.Stop()
-        Write-Log ('推荐策略被改：' + ($bad -join '、')) 'err'
-        $ans = [System.Windows.Forms.MessageBox]::Show(
-            ("上游策略工具把这几条推荐策略删掉了：`r`n`r`n" + ($bad -join '、') + "`r`n`r`n现在补回吗？（点「是」会重写全部推荐策略，需点一次 UAC）"),
-            '推荐策略被改', 'YesNo', 'Warning', 'Button2')
-        if ($ans -eq 'Yes') { Apply-RecommendedPolicies }
-        else { Write-Log '这次先不补回；下次启动面板还会提示。' 'warn' }
+        Write-Log ('上游策略工具删掉了专属策略：' + ($bad -join '、')) 'warn'
+        $msg = ("上游策略管理工具会先清空策略键再重写，导致这 " + $bad.Count + " 条专属策略被删：`r`n`r`n" + ($bad -join '、') +
+                "`r`n`r`n它们在上游工具里没有开关（你无法主动关闭），只会被误删。`r`n`r`n现在只补回这 " + $bad.Count + " 条吗？（不会动你在策略面板里的其它修改；需点一次 UAC）")
+        if (Show-DialogAsk '专属策略被删' $msg ('补回这 ' + $bad.Count + ' 条') '暂不') {
+            [void](Restore-ExtraPolicies $bad)
+        } else {
+            Write-Log '这次先不补回；下次打开面板还会提示。' 'warn'
+        }
     })
     $script:policyWatch.Start()
-    Write-Log ('开始盯上游策略工具：它一旦删掉 ' + $script:extraOnlyPolicies.Count + ' 条专属推荐策略就会提醒（只提醒，不会自动改）')
+    Write-Log ('开始盯上游策略工具：它一旦删掉 ' + $script:extraOnlyPolicies.Count + ' 条专属推荐策略，会在你关掉策略窗口后提示')
 }
+
 function Copy-PolicyDriftJson {
     $d = Get-PolicyDrift
     $items = @()
@@ -1752,6 +1793,38 @@ function Show-DialogCentered($dlg) {
             ($form.Top + [int](($form.Height - $dlg.Height) / 2)))
     } catch { }
 }
+
+function Show-DialogAsk([string]$title, [string]$message, [string]$okText = '确定', [string]$cancelText = '取消', [switch]$Danger, [switch]$FocusCancel) {
+    # 统一的自绘确认框（深色主题）：确定=绿色 primary；取消=secondary；-Danger 时确定变红
+    if ($RunOnce) { return $true }
+    if (-not $form -or $form.IsDisposed) { return $true }
+    $w = S 470; $pad = S 18; $inner = $w - 2 * $pad
+    $dlg = New-DialogBase $title $w
+    $probe = New-Object System.Windows.Forms.Label
+    $probe.AutoSize = $true
+    $probe.MaximumSize = New-Object System.Drawing.Size($inner, 0)
+    $probe.Text = $message
+    $probe.Font = $fontBase
+    $h = [int]$probe.PreferredHeight
+    $probe.Dispose()
+    if ($h -lt (S 18)) { $h = S 18 }
+    $lb = New-Object System.Windows.Forms.Label
+    $lb.AutoSize = $false
+    $lb.Text = $message
+    $lb.Font = $fontBase
+    $lb.ForeColor = $clrText
+    $lb.BackColor = [System.Drawing.Color]::Transparent
+    $lb.Location = New-Object System.Drawing.Point($pad, $pad)
+    $lb.Size = New-Object System.Drawing.Size($inner, $h)
+    $dlg.Controls.Add($lb)
+    $okVariant = if ($Danger) { 'danger' } else { 'primary' }
+    $ft = Add-DialogFooter $dlg $w ($pad + $h) $okText $okVariant $cancelText
+    if ($FocusCancel) { try { $dlg.ActiveControl = $ft.Cancel } catch { } }
+    $res = $dlg.ShowDialog($form)
+    try { $dlg.Dispose() } catch { }
+    return ($res -eq 'OK')
+}
+
 
 function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     # 一次问完：关 Edge（若在运行）+ 加密 + 保留份数 + 目标目录。整框按文字实测高度排版。
@@ -2534,9 +2607,7 @@ function Invoke-RestoreBackup([switch]$Auto) {
         $runningEdge = @(Get-PackageProcs)
         if ($runningEdge.Count -gt 0) {
             if (-not $Auto -and -not $RunOnce) {
-                $ansClose = [System.Windows.Forms.MessageBox]::Show(
-                    ("检测到本包 Edge 正在运行（" + $runningEdge.Count + " 个进程），恢复数据前必须先关闭它。`r`n`r`n现在自动关闭 Edge 并继续恢复吗？"),
-                    '需要先关闭 Edge', 'YesNo', 'Warning', 'Button1')
+                $ansClose = $(if (Show-DialogAsk '需要先关闭 Edge' ("检测到本包 Edge 正在运行（" + $runningEdge.Count + " 个进程），恢复数据前必须先关闭它。`r`n`r`n现在自动关闭 Edge 并继续恢复吗？") '关闭并继续' '取消') { 'Yes' } else { 'No' })
                 if ($ansClose -ne 'Yes') { Write-Log '已取消恢复（请先手动关闭本包 Edge 后重试）' 'warn'; return }
             }
             if (-not (Close-Edge)) { Write-Log 'Edge 没能完全关闭，已中止恢复（请手动关闭 Edge 后重试）' 'err'; return }
@@ -2642,13 +2713,11 @@ function Invoke-RestoreBackup([switch]$Auto) {
     # ⑨ 空包根（新机只放了面板+备份包）：提示装本体
     if ($Auto) { Write-Log '（自测模式：跳过收尾提问）' }
     elseif ($script:noPackage) {
-        $ans = [System.Windows.Forms.MessageBox]::Show(
-            "用户数据已恢复，但当前目录还没有 Edge 程序本体。`r`n`r`n现在下载并安装一套吗？（会自动瘦身，刚恢复的数据不会被覆盖）",
-            '需要安装 Edge 本体', 'YesNo', 'Question')
+        $ans = $(if (Show-DialogAsk '需要安装 Edge 本体' "用户数据已恢复，但当前目录还没有 Edge 程序本体。`r`n`r`n现在下载并安装一套吗？（会自动瘦身，刚恢复的数据不会被覆盖）" '现在安装' '暂不') { 'Yes' } else { 'No' })
         if ($ans -eq 'Yes') { Invoke-UpdateNow $true }
         else { Write-Log '请稍后点「更新并瘦身」装一套 Edge 本体' 'warn' }
     } else {
-        $ans2 = [System.Windows.Forms.MessageBox]::Show('要顺便把推荐策略也应用一遍吗？（会弹一次 UAC）', '应用推荐策略', 'YesNo', 'Question')
+        $ans2 = $(if (Show-DialogAsk '应用推荐策略' '要顺便把推荐策略也应用一遍吗？（会弹一次 UAC）' '应用' '暂不') { 'Yes' } else { 'No' })
         if ($ans2 -eq 'Yes') { Apply-RecommendedPolicies }
     }
     if (-not $script:closeRequested -and -not $form.IsDisposed) { Update-StatusAsync }
@@ -2681,9 +2750,7 @@ function Invoke-Action([string]$kind) {
         } elseif ($r.Code -eq 2) {
             Write-Log '被拒绝：本包 Edge 还在运行' 'warn'
             $ans = if ($RunOnce) { 'No' } else {
-                [System.Windows.Forms.MessageBox]::Show(
-                    ("本包 Edge 正在运行，缓存/程序文件被占用。`r`n`r`n现在关掉它并继续吗？（会关闭你正在用的 Edge 窗口）"),
-                    '需要先关闭 Edge', 'YesNo', 'Warning')
+                $(if (Show-DialogAsk '需要先关闭 Edge' ("本包 Edge 正在运行，缓存/程序文件被占用。`r`n`r`n现在关掉它并继续吗？（会关闭你正在用的 Edge 窗口）") '关闭并继续' '取消') { 'Yes' } else { 'No' })
             }
             if ($ans -eq 'Yes') {
                 if (-not (Close-Edge)) { Write-Log 'Edge 没能完全关闭，已中止重试' 'err'; return }
@@ -2725,7 +2792,7 @@ function Open-PolicyGui {
         } catch { Write-Log ('主题文件写入失败（策略窗口可能跟随系统色）：' + $_.Exception.Message) 'warn' }
         # 含路径的元素自己加引号：-ArgumentList 不会替你加，包根／脚本路径带空格时会被拆成两个参数
         Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
-            -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $runZh + '"'), '-NoElevate', '-EdgeRoot', ('"' + $edgeRoot + '"')) -WorkingDirectory (Split-Path $runZh -Parent) -WindowStyle Hidden | Out-Null
+            -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $runZh + '"'), '-NoElevate', '-EdgeRoot', ('"' + $edgeRoot + '"')) -WorkingDirectory (Split-Path $runZh -Parent) -WindowStyle Hidden -PassThru | ForEach-Object { $script:policyGuiProc = $_; $script:policyGuiStarted = Get-Date }
         Write-Log '已拉起策略界面' 'ok'
           try { Start-PolicyWatch } catch { }   # 只读监听那 4 条专属推荐策略
     } catch { Write-Log ('启动失败：' + $_.Exception.Message) 'err' }
@@ -3053,11 +3120,7 @@ function Invoke-UpdateNow([bool]$withSlim = $false) {
     $local = Get-LocalVersion
     if ($target.version -eq $local) { Write-Log '已经是最新版本，无需更新' 'ok'; return }
     if (-not $RunOnce) {
-        $ans = [System.Windows.Forms.MessageBox]::Show(
-            ("将把 Edge 本体从 " + $local + " 更新到 " + $target.version + "。" + "`r`n`r`n" +
-             "过程：关闭本包 Edge → 下载 → 解压 → 覆盖程序文件（保留 chrome++.ini 等 2 项）→ 删除旧版本目录。" + "`r`n`r`n" +
-             $(if ($withSlim) { "更新完成后会自动执行「全套瘦身 + 关闭组件更新」。" } else { "本次只更新程序文件，瘦身需要你另行点击。" }) + "`r`n`r`n继续吗？"),
-            '确认更新 Edge', 'YesNo', 'Question')
+        $ans = $(if (Show-DialogAsk '确认更新 Edge' (("将把 Edge 本体从 " + $local + " 更新到 " + $target.version + "。" + "`r`n`r`n" + "过程：关闭本包 Edge → 下载 → 解压 → 覆盖程序文件（保留 chrome++.ini 等 2 项）→ 删除旧版本目录。" + "`r`n`r`n" + $(if ($withSlim) { "更新完成后会自动执行「全套瘦身 + 关闭组件更新」。" } else { "本次只更新程序文件，瘦身需要你另行点击。" }) + "`r`n`r`n继续吗？")) '开始更新' '取消') { 'Yes' } else { 'No' })
         if ($ans -ne 'Yes') { Write-Log '已取消更新'; return }
     }
     Set-Busy $true '更新中…'
@@ -3254,9 +3317,7 @@ try {
     Write-Log ('更新前自动备份异常：' + $_.Exception.Message) 'err'
 }
 if (-not $script:updateBackupOk -and -not $dry -and -not $RunOnce) {
-    $ansB = [System.Windows.Forms.MessageBox]::Show(
-        "更新前自动备份没有成功。`r`n`r`n现在跳过备份、继续更新 Edge 吗？（更新过程中数据不会被改动，但出问题时没有这次的备份可回滚）",
-        '更新前备份失败', 'YesNo', 'Warning', 'Button2')
+    $ansB = $(if (Show-DialogAsk '更新前备份失败' "更新前自动备份没有成功。`r`n`r`n现在跳过备份、继续更新 Edge 吗？（更新过程中数据不会被改动，但出问题时没有这次的备份可回滚）" '跳过备份继续' '中止' -Danger -FocusCancel) { 'Yes' } else { 'No' })
     if ($ansB -ne 'Yes') { Write-Log '已取消更新（因为更新前备份失败）'; return }
     Write-Log '用户选择跳过备份继续更新' 'warn'
 }
@@ -3371,9 +3432,7 @@ if (-not $script:updateBackupOk -and -not $dry -and -not $RunOnce) {
         } elseif ($RunOnce) {
             Write-Log '本地暂无策略键（自测模式跳过弹窗询问）'
         } else {
-            $ansPol = [System.Windows.Forms.MessageBox]::Show(
-                "更新完成。本地还没有推荐策略，现在应用吗？（会弹一次 UAC）",
-                '应用推荐策略', 'YesNo', 'Question', 'Button1')
+            $ansPol = $(if (Show-DialogAsk '应用推荐策略' '更新完成。本地还没有推荐策略，现在应用吗？（会弹一次 UAC）' '应用' '暂不') { 'Yes' } else { 'No' })
             if ($ansPol -eq 'Yes') { Apply-RecommendedPolicies }
             else { Write-Log '稍后可点「应用推荐策略」手动应用' 'warn' }
         }
@@ -3568,9 +3627,7 @@ return ('ERR|')
         Write-Log ('静默探测：面板有新版本 v' + $script:panelVersion + ' → v' + $tagText) 'warn'
         if ($script:isBusy) { return }
         if ($RunOnce) { return }
-        $ansP = [System.Windows.Forms.MessageBox]::Show(
-            ("发现面板新版本：v" + $script:panelVersion + " → v" + $tagText + "`r`n`r`n现在更新吗？（走镜像下载并校验 SHA256，更新后面板会自己重启）`r`n`r`n选「否」也没关系，顶栏按钮会保持绿色，随时可点。"),
-            '面板有新版本', 'YesNo', 'Question', 'Button2')
+        $ansP = $(if (Show-DialogAsk '面板有新版本' ("发现面板新版本：v" + $script:panelVersion + " → v" + $tagText + "`r`n`r`n现在更新吗？（走镜像下载并校验 SHA256，更新后面板会自己重启）`r`n`r`n选「暂不」也没关系，顶栏按钮会保持绿色，随时可点。") '现在更新' '暂不' -FocusCancel) { 'Yes' } else { 'No' })
         if ($ansP -eq 'Yes') { Invoke-PanelUpdate -SkipConfirm }
     })
     $script:panelProbeTimer.Start()
@@ -3641,9 +3698,7 @@ function Invoke-PanelUpdate([switch]$SkipConfirm) {
         Write-Log ('发现面板新版本：v' + $script:panelVersion + ' → v' + $tagVerText) 'warn'
         if ($RunOnce) { return }
         if (-not $SkipConfirm) {
-            $ans = [System.Windows.Forms.MessageBox]::Show(
-                ("发现面板新版本：v" + $script:panelVersion + " → v" + $tagVerText + "`r`n`r`n将通过国内镜像站下载新版 EXE、校验 SHA256，并保留旧版为 .old。现在更新吗？"),
-                '更新便携 Edge 面板', 'YesNo', 'Question', 'Button1')
+            $ans = $(if (Show-DialogAsk '更新便携 Edge 面板' ("发现面板新版本：v" + $script:panelVersion + " → v" + $tagVerText + "`r`n`r`n将通过国内镜像站下载新版 EXE、校验 SHA256，并保留旧版为 .old。现在更新吗？") '现在更新' '取消') { 'Yes' } else { 'No' })
             if ($ans -ne 'Yes') { Write-Log '已取消面板更新'; return }
         }
 
@@ -3823,11 +3878,7 @@ $form.Add_Shown({
             $running = @(Get-PackageProcs)
             if ($running.Count -gt 0) {
                 Write-Log ('检测到本包 Edge 正在运行（' + $running.Count + ' 个进程）') 'warn'
-                $ansRun = [System.Windows.Forms.MessageBox]::Show(
-                    ("本包 Edge 正在运行（" + $running.Count + " 个进程）。`r`n`r`n" +
-                     "瘦身、清理、更新都需要它完全退出，否则会被拒绝。`r`n`r`n" +
-                     "现在关掉它吗？先正常关窗口，8 秒后仍未退出的强制结束；不影响系统里其它浏览器。"),
-                    'Edge 正在运行', 'YesNo', 'Question')
+                $ansRun = $(if (Show-DialogAsk 'Edge 正在运行' ("本包 Edge 正在运行（" + $running.Count + " 个进程）。`r`n`r`n" + "瘦身、清理、更新都需要它完全退出，否则会被拒绝。`r`n`r`n" + "现在关掉它吗？先正常关窗口，8 秒后仍未退出的强制结束；不影响系统里其它浏览器。") '关闭 Edge 并继续' '暂不') { 'Yes' } else { 'No' })
                 if ($ansRun -eq 'Yes') { Close-Edge }
                 else { Write-Log '保持运行；等你要瘦身/清理/备份时，面板会再问一次要不要关。' 'warn' }
             }
