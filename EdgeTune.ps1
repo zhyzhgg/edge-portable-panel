@@ -251,6 +251,32 @@ function Show-StatusJson([string]$pkgRoot, [string]$prog, [string]$ini) {
         EdgeRunning = (Test-EdgeRunningIn $pkgRoot)
     } | ConvertTo-Json -Compress
 }
+function Move-RootProxy([string]$pkgRoot, [string]$programDir) {
+    # 版本目录里的 msedge_proxy.exe 对功能没用（站点应用/PWA 快捷方式只认**包根**那份），
+    # 但上游每一版都会带一份 ⇒ 瘦身时把它「归位到包根、删掉原位置」：
+    #   · 包根缺 → 直接 Move 过去（原位置自然消失）
+    #   · 包根已有 → 删掉版本目录里这份（以包根那份为准）
+    # 幂等：版本目录没有该文件就什么都不做。
+    if ([string]::IsNullOrWhiteSpace($programDir)) { return }
+    $verProxy = Join-Path $programDir 'msedge_proxy.exe'
+    if (-not (Test-Path -LiteralPath $verProxy)) { return }
+    $rootProxy = Join-Path (Join-Path $pkgRoot 'Edge') 'msedge_proxy.exe'
+    try {
+        $sz = [math]::Round((Get-Item -LiteralPath $verProxy).Length / 1MB, 2)
+        if (-not (Test-Path -LiteralPath $rootProxy)) {
+            $dir = Split-Path $rootProxy -Parent
+            if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+            Move-Item -LiteralPath $verProxy -Destination $rootProxy -Force -ErrorAction Stop
+            Say ('已把 msedge_proxy.exe 移动到包根并删除原位置（' + $sz + ' MB；站点应用/PWA 快捷方式靠包根这份启动）') 'Green'
+        } else {
+            Remove-Item -LiteralPath $verProxy -Force -ErrorAction Stop
+            Say ('包根已有 msedge_proxy.exe，删除版本目录内相同那份（' + $sz + ' MB；快捷方式只认包根）') 'Green'
+        }
+    } catch {
+        Say ('msedge_proxy.exe 归位失败（不影响其它功能，可手工删版本目录那份）：' + $_.Exception.Message) 'Yellow'
+    }
+}
+
 function Invoke-Slim([string]$prog) {
     $files = Get-SlimTargets $prog
     if ($files.Count -eq 0) { Say '程序目录已经没有可删的文件（瘦身过了）。' 'Green'; return }
@@ -296,6 +322,7 @@ function Do-SlimAll([string]$pkgRoot, [string]$programDir, [string]$iniPath) {
     $n = Test-EdgeRunningIn $pkgRoot
     if ($n -gt 0) { Say ('[中止] 本包有 ' + $n + ' 个进程在跑，先完全退出 Edge。') 'Red'; return $false }
     Invoke-Slim $programDir
+    Move-RootProxy $pkgRoot $programDir
     if ($iniPath) { [void](Set-ComponentUpdate $iniPath $true) } else { Say '找不到 ini，跳过组件更新开关。' 'Yellow' }
     return $true
 }
@@ -304,6 +331,7 @@ function Do-SlimOnly([string]$pkgRoot, [string]$programDir) {
     $n = Test-EdgeRunningIn $pkgRoot
     if ($n -gt 0) { Say ('[中止] 本包有 ' + $n + ' 个进程在跑，先完全退出 Edge。') 'Red'; return $false }
     Invoke-Slim $programDir
+    Move-RootProxy $pkgRoot $programDir
     return $true
 }
 
