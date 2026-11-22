@@ -818,10 +818,11 @@ if ($maxH -lt $wantH) {
 # ---------------- 日志 / 忙碌态 ----------------
 function Write-Log([string]$text, [string]$level = 'info') {
     $t = (Get-Date).ToString('HH:mm:ss')
-    $prefix = switch ($level) { 'ok' { '  OK  ' } 'warn' { ' WARN ' } 'err' { ' FAIL ' } default { ' ·    ' } }
-    Write-Host ("[$t]$prefix$text")
+    # 级别用方括号包住，避免在非等宽字体下与正文黏在一起；info 用中点
+    $prefix = switch ($level) { 'ok' { '[OK] ' } 'warn' { '[WARN] ' } 'err' { '[FAIL] ' } default { '· ' } }
+    Write-Host ("[$t] $prefix$text")
     if ($log -and -not $log.IsDisposed) {
-        $log.AppendText("[$t]$prefix$text`r`n") | Out-Null
+        $log.AppendText("[$t] $prefix$text`r`n") | Out-Null
         $log.SelectionStart = $log.TextLength
         $log.ScrollToCaret()
     }
