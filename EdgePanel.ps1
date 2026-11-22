@@ -1452,15 +1452,22 @@ function Show-PolicyDrift {
 }
 
 # ---------------- 上游策略 GUI 的"专属条目丢失"监听（只读 + 询问，绝不自动改写） ----------------
-# 2026-11-21 实测：上游 debloater-gui.ps1 的政策表共 142 条，我们的基线里另有 4 条它完全没有；
-# 它的 Apply 是"清空整键再按勾选重写"，所以这 4 条任何一次 Apply 都会消失（与勾选无关）。
-# 用户语义：基线 = 长期想要的；GUI 里临时改的（勾选/取消勾选）不算问题，因此只盯这 4 条。
+# 上游 debloater-gui.ps1 的 Apply 是"清空整键 → 按勾选重写"（2026-11-22 实测其默认值）：
+#   · NewTabPageAllowedBackgroundTypes：上游完全没有这一项（无开关）⇒ 每次 Apply 必被清掉，是真·专属；
+#   · SleepingTabsEnabled=1 / SleepingTabsTimeout=900 / TrackingPrevention=2：上游有对应开关与下拉，
+#     默认值恰好与本面板推荐值相同 ⇒ 勾着时按同值写回（不漂移），只有取消勾选或改值才漂移（那属于用户在 GUI 里的选择）。
+# 因此这里盯这 4 条；提示文案按"上游有没有 UI"分两类说明，避免误说"都没有开关"。
 $script:extraOnlyPolicies = @(
     'SleepingTabsEnabled',
     'SleepingTabsTimeout',
     'TrackingPrevention',
     'NewTabPageAllowedBackgroundTypes'
 )
+$script:upstreamUiPolicies = @(
+    'SleepingTabsEnabled',
+    'SleepingTabsTimeout',
+    'TrackingPrevention'
+)   # 上游策略 GUI 里有对应开关/下拉的条目（其余专属条目在上游完全没有 UI）
 $script:policyGuiProc = $null
 $script:policyGuiStarted = $null
 $script:policyWatch = $null
@@ -1531,9 +1538,15 @@ function Start-PolicyWatch {
         $script:policyWatchHits++
         if ($script:policyWatchHits -lt 2) { return }
         $script:policyWatch.Stop()
-        Write-Log ('上游策略工具删掉了专属策略：' + ($bad -join '、')) 'warn'
-        $msg = ("上游策略管理工具会先清空策略键再重写，导致这 " + $bad.Count + " 条专属策略被删：`r`n`r`n" + ($bad -join '、') +
-                "`r`n`r`n它们在上游工具里没有开关（你无法主动关闭），只会被误删。`r`n`r`n现在只补回这 " + $bad.Count + " 条吗？（不会动你在策略面板里的其它修改；需点一次 UAC）")
+        Write-Log ('上游策略工具导致这些推荐策略与基线不一致：' + ($bad -join '、')) 'warn'
+        # 分两类说明：A=上游完全没有这一项（无开关，只能被清键误删）；B=上游有开关/下拉（默认值与推荐值相同）
+        $noUi = @($bad | Where-Object { $script:upstreamUiPolicies -notcontains $_ })
+        $hasUi = @($bad | Where-Object { $script:upstreamUiPolicies -contains $_ })
+        $why = ''
+        if ($noUi.Count -gt 0) { $why += ("`r`n`r`n" + ($noUi -join '、') + "：上游工具里完全没有这一项（没有开关），只能被「清空策略键再重写」误删。") }
+        if ($hasUi.Count -gt 0) { $why += ("`r`n`r`n" + ($hasUi -join '、') + "：上游工具里有对应开关/下拉（默认值与本面板推荐值相同）；如果你刚在上游主动关掉了它们，选「暂不」即可。") }
+        $msg = ("上游策略管理工具会先清空策略键再按勾选重写，导致下面 " + $bad.Count + " 条推荐策略与基线不一致：`r`n`r`n" + ($bad -join '、') + $why +
+                "`r`n`r`n现在只补回这几条吗？（只写这些值，不会动你在策略面板里的其它修改；需点一次 UAC）")
         if (Show-DialogAsk '专属策略被删' $msg ('补回这 ' + $bad.Count + ' 条') '暂不') {
             [void](Restore-ExtraPolicies $bad)
         } else {
