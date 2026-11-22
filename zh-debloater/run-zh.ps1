@@ -94,7 +94,8 @@ try {
     else { Log '警告：Edge 目录没有 chrome++.ini，策略键可能不对' 'Yellow' }
 
     # ---- 4. 翻译 ----
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $here 'translate.ps1') `
+    # 同进程调用翻译脚本，省掉一次 powershell.exe 冷启动（首次提速 ~0.5 秒）
+    & (Join-Path $here 'translate.ps1') `
         -Source $src -Out $out -Map (Join-Path $here 'zh-CN.json') -Report $report | Out-Null
     if (-not (Test-Path $out)) { throw '翻译没有生成 out.ps1' }
     $b = [System.IO.File]::ReadAllBytes($out)[0..2]

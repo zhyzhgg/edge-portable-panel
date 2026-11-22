@@ -673,14 +673,14 @@ function New-Note($parent, [int]$x, [int]$y, [int]$w, [int]$h, [string]$text) {
 }
 
 # 统一 12px 模块间距网格（外边距 14px，左右卡各 415px，中缝 12px，内宽 387px）
-$gSlim = New-Group 14 168 415 160 '瘦身（程序文件）'
-$script:btnSlimAll  = New-Btn $gSlim 14  38 387 28 '全套瘦身：删无用文件 + 关闭组件更新' { Invoke-Action 'SlimAll' }
-$script:btnSlimOnly = New-Btn $gSlim 14  74 123 28 '只删文件' { Invoke-Action 'SlimOnly' }
-$script:btnIniOff   = New-Btn $gSlim 146 74 123 28 '只关组件更新' { Invoke-Action 'IniOff' }
+$gSlim = New-Group 14 168 415 160 '程序瘦身'
+$script:btnSlimAll  = New-Btn $gSlim 14  38 387 28 '一键瘦身（删无用组件 + 关自动更新）' { Invoke-Action 'SlimAll' }
+$script:btnSlimOnly = New-Btn $gSlim 14  74 123 28 '仅删组件' { Invoke-Action 'SlimOnly' }
+$script:btnIniOff   = New-Btn $gSlim 146 74 123 28 '关闭组件更新' { Invoke-Action 'IniOff' }
 $script:btnIniOn    = New-Btn $gSlim 278 74 123 28 '恢复组件更新' { Invoke-Action 'IniOn' }
-[void](New-Note $gSlim 14 108 387 44 '删多余语言包（留中/英）、Copilot 外壳、遥测与通知组件（约 380 项）；核心文件一律保留。')
+[void](New-Note $gSlim 14 108 387 44 '移除多余语言包（保留中/英）、Copilot 外壳、遥测与通知组件（约 380 项），核心运行文件一律保留。')
 
-$gUpdate = New-Group 441 168 415 160 '更新（Edge 本体）'
+$gUpdate = New-Group 441 168 415 160 'Edge 更新'
 $valCurVer = New-Object System.Windows.Forms.Label
 $valCurVer.Text = '当前版本：—'
 $valCurVer.Font = $fontBase
@@ -706,13 +706,13 @@ $script:btnUpdate     = New-Btn $gUpdate 146 84 123 28 '下载并更新' { Invok
 $script:btnUpdateSlim = New-Btn $gUpdate 278 84 123 28 '更新并瘦身' { Invoke-UpdateNow $true } $false
 $script:btnUpdate.Enabled = $false
 $script:btnUpdateSlim.Enabled = $false
-[void](New-Note $gUpdate 14 118 387 34 '只换程序文件；或再自动瘦身（删约 380 项 + 关组件更新）。chrome++.ini 等配置始终保留。')
+[void](New-Note $gUpdate 14 118 387 34 '可仅更新程序文件，或更新后自动瘦身；chrome++.ini 等便携配置始终保留。')
 
 $gCache = New-Group 14 340 415 120 '缓存与备份'
 $script:btnClean   = New-Btn $gCache 14  38 123 30 '清理缓存' { Invoke-Action 'Clean' }
 $script:btnBackup  = New-Btn $gCache 146 38 123 30 '清理并备份' { Invoke-CleanAndBackup -Force:(([System.Windows.Forms.Control]::ModifierKeys -band [System.Windows.Forms.Keys]::Shift) -ne 0) } $true
 $script:btnRestore = New-Btn $gCache 278 38 123 30 '从备份恢复' { Invoke-RestoreBackup }
-[void](New-Note $gCache 14 76 387 36 '清理缓存不动书签/密码/扩展；备份默认加密，换机时直接点「从备份恢复」。')
+[void](New-Note $gCache 14 76 387 36 '清理缓存不触碰书签、密码与扩展；备份默认加密，换机时直接点「从备份恢复」。')
 
 $gPolicy = New-Group 441 340 415 120 '策略 / 系统集成'
 
@@ -1545,8 +1545,8 @@ function Start-PolicyWatch {
         $why2 = @()
         if ($noUi.Count -gt 0) { $why2 += ('· ' + ($noUi -join '、') + ' —— 上游没有这个开关，必被删掉') }
         if ($hasUi.Count -gt 0) { $why2 += ('· ' + ($hasUi -join '、') + ' —— 上游有开关；若是你刚在上面主动关的，选「不用了」即可') }
-        $msg = ("上游策略管理工具重写策略时，下面这些没被写回来：`r`n`r`n" + ($why2 -join "`r`n") + "`r`n`r`n现在补回吗？（只写这几条，其它策略不动；会弹一次 UAC）")
-        if (Show-DialogAsk '策略被上游工具删了' $msg '补回' '不用了') {
+        $msg = ("上游策略工具重写注册表后，以下推荐策略未保留：`r`n`r`n" + ($why2 -join "`r`n") + "`r`n`r`n是否立即补回？（仅写入上述条目，其他策略不变，需 UAC 确认）")
+        if (Show-DialogAsk '检测到专属策略被覆盖' $msg '立即补回' '暂不处理') {
             [void](Restore-ExtraPolicies $bad)
         } else {
             Write-Log '这次先不补回；下次打开面板还会提示。' 'warn'
@@ -1845,8 +1845,8 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $inner = $w - 2 * $pad
     $dlg = New-DialogBase '备份用户数据' $w
 
-    $lead = if ($edgeRunning) { '将先关闭 Edge 并清理缓存，' } else { '将先清理缓存，' }
-    $textTop = $lead + "再备份全部用户数据（书签、扩展、登录信息都会保留）。"
+    $lead = if ($edgeRunning) { '备份前将先关闭 Edge 并清理缓存，' } else { '备份前将先清理缓存，' }
+    $textTop = $lead + "书签、扩展与登录状态均完整保留。"
     $hTop = Get-TextHeight $textTop $fontBase $inner
 
     $lb = New-Object System.Windows.Forms.Label
@@ -1861,13 +1861,14 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $rowY = $pad + $hTop + (S 14)
     $chk = New-Object System.Windows.Forms.CheckBox
     $chk.Text = '加密备份'
-    $chk.AutoSize = $false
+    $chk.AutoSize = $true
     $chk.CheckAlign = 'MiddleLeft'
     $chk.TextAlign = 'MiddleLeft'
-    $chk.Size = New-Object System.Drawing.Size((S 96), (S 26))
     $chk.Checked = ($cfg.last -eq 'encrypted')
     $chk.ForeColor = $clrText
-    $chk.Location = New-Object System.Drawing.Point(($pad + (S 2)), $rowY)
+    $chkH = $chk.PreferredSize.Height
+    $chkY = $rowY + [int][math]::Max(0, (((S 26) - $chkH) / 2))
+    $chk.Location = New-Object System.Drawing.Point(($pad + (S 2)), $chkY)
     $dlg.Controls.Add($chk)
 
     $pwStatus = New-Object System.Windows.Forms.Label
@@ -1875,13 +1876,13 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $pwStatus.TextAlign = 'MiddleLeft'
     $pwStatus.Size = New-Object System.Drawing.Size((S 140), (S 26))
     $pwStatus.ForeColor = $clrMuted
-    $pwStatus.Location = New-Object System.Drawing.Point(($pad + (S 100)), $rowY)
+    $pwStatus.Location = New-Object System.Drawing.Point(($chk.Right + (S 6)), ($rowY + 1))
     $dlg.Controls.Add($pwStatus)
 
     $btnPw = New-DialogBtn $dlg ($w - $pad - (S 104)) $rowY (S 104) (S 26) '修改密码…' 'secondary'
     $btnCheck = New-DialogBtn $dlg ($w - $pad - (S 104) - (S 94)) $rowY (S 88) (S 26) '校验备份' 'secondary'
 
-    $refreshPw = { if (Get-BackupPw) { $pwStatus.Text = '（已保存密码）' } else { $pwStatus.Text = '（未设置）' } }
+    $refreshPw = { if (Get-BackupPw) { $pwStatus.Text = '已保存密码' } else { $pwStatus.Text = '未设置密码' } }
     & $refreshPw
     $btnPw.Add_Click({
         $newPw = Show-PwDialog '备份密码' '设置备份密码。忘记密码后，备份文件将无法打开。' $true
@@ -2619,7 +2620,7 @@ function Invoke-RestoreBackup([switch]$Auto) {
         $runningEdge = @(Get-PackageProcs)
         if ($runningEdge.Count -gt 0) {
             if (-not $Auto -and -not $RunOnce) {
-                $ansClose = $(if (Show-DialogAsk '需要先关闭 Edge' ("检测到本包 Edge 正在运行（" + $runningEdge.Count + " 个进程），恢复数据前必须先关闭它。`r`n`r`n现在自动关闭 Edge 并继续恢复吗？") '关闭并继续' '取消') { 'Yes' } else { 'No' })
+                $ansClose = $(if (Show-DialogAsk '需要先关闭 Edge' ("当前便携包 Edge 正在运行（" + $runningEdge.Count + " 个进程），恢复数据前需先关闭。`r`n`r`n是否立即关闭 Edge 并继续恢复？") '关闭并继续' '取消') { 'Yes' } else { 'No' })
                 if ($ansClose -ne 'Yes') { Write-Log '已取消恢复（请先手动关闭本包 Edge 后重试）' 'warn'; return }
             }
             if (-not (Close-Edge)) { Write-Log 'Edge 没能完全关闭，已中止恢复（请手动关闭 Edge 后重试）' 'err'; return }
@@ -2725,7 +2726,7 @@ function Invoke-RestoreBackup([switch]$Auto) {
     # ⑨ 空包根（新机只放了面板+备份包）：提示装本体
     if ($Auto) { Write-Log '（自测模式：跳过收尾提问）' }
     elseif ($script:noPackage) {
-        $ans = $(if (Show-DialogAsk '需要安装 Edge 本体' "用户数据已恢复，但当前目录还没有 Edge 程序本体。`r`n`r`n现在下载并安装一套吗？（会自动瘦身，刚恢复的数据不会被覆盖）" '现在安装' '暂不') { 'Yes' } else { 'No' })
+        $ans = $(if (Show-DialogAsk '需要安装 Edge 本体' "用户数据已恢复，但当前目录缺少 Edge 程序本体。`r`n`r`n是否立即下载并部署便携 Edge？（自动瘦身，不覆盖刚恢复的数据）" '现在安装' '暂不') { 'Yes' } else { 'No' })
         if ($ans -eq 'Yes') { Invoke-UpdateNow $true }
         else { Write-Log '请稍后点「更新并瘦身」装一套 Edge 本体' 'warn' }
     } else {
@@ -2808,15 +2809,15 @@ function Open-PolicyGui {
         # 快路径：中文副本已生成且不比上游脚本旧 ⇒ 直接拉起它，省掉"下载 + 翻译 + 一次冷启动"
         $fast = $false
         try {
-            if ((Test-Path -LiteralPath $outPs1) -and (Test-Path -LiteralPath $upSrc)) {
+            if (Test-Path -LiteralPath $outPs1) {
                 $fast = if (Test-Path -LiteralPath $upSrc) { ((Get-Item -LiteralPath $outPs1).LastWriteTime -ge (Get-Item -LiteralPath $upSrc).LastWriteTime) } else { $true }
             }
         } catch { }
         if ($fast) {
-            Write-Log '启动中文策略界面（已预热，直接拉起）…'
+            Write-Log '启动中文策略界面（快路径直接提权拉起，请在 UAC 中点「是」）…'
             $script:policyGuiProc = Start-Process -FilePath $psExe `
-                -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $outPs1 + '"')) `
-                -WorkingDirectory $zhDir -PassThru
+                -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"' + $outPs1 + '"')) `
+                -WorkingDirectory $zhDir -Verb RunAs -PassThru
         } else {
             Write-Log '启动中文策略界面（首次需下载/翻译上游脚本，稍慢；之后会快）…'
             $useSkip = Test-Path -LiteralPath $upSrc
@@ -3350,7 +3351,7 @@ try {
     Write-Log ('更新前自动备份异常：' + $_.Exception.Message) 'err'
 }
 if (-not $script:updateBackupOk -and -not $dry -and -not $RunOnce) {
-    $ansB = $(if (Show-DialogAsk '更新前备份失败' "更新前自动备份没有成功。`r`n`r`n现在跳过备份、继续更新 Edge 吗？（更新过程中数据不会被改动，但出问题时没有这次的备份可回滚）" '跳过备份继续' '中止' -Danger -FocusCancel) { 'Yes' } else { 'No' })
+    $ansB = $(if (Show-DialogAsk '更新前备份失败' "更新前自动备份失败。`r`n`r`n是否跳过备份并继续更新 Edge？（更新不会改动用户数据，但本次将无新备份可回滚）" '跳过备份继续' '中止' -Danger -FocusCancel) { 'Yes' } else { 'No' })
     if ($ansB -ne 'Yes') { Write-Log '已取消更新（因为更新前备份失败）'; return }
     Write-Log '用户选择跳过备份继续更新' 'warn'
 }
@@ -3660,7 +3661,7 @@ return ('ERR|')
         Write-Log ('静默探测：面板有新版本 v' + $script:panelVersion + ' → v' + $tagText) 'warn'
         if ($script:isBusy) { return }
         if ($RunOnce) { return }
-        $ansP = $(if (Show-DialogAsk '面板有新版本' ("发现面板新版本：v" + $script:panelVersion + " → v" + $tagText + "`r`n`r`n现在更新吗？（走镜像下载并校验 SHA256，更新后面板会自己重启）`r`n`r`n选「暂不」也没关系，顶栏按钮会保持绿色，随时可点。") '现在更新' '暂不' -FocusCancel) { 'Yes' } else { 'No' })
+        $ansP = $(if (Show-DialogAsk '面板有新版本' ("发现面板新版本：v" + $script:panelVersion + " → v" + $tagText + "`r`n`r`n是否立即通过镜像下载并更新？（校验 SHA256 后自动重启；选「暂不」顶栏按钮将保持绿色，随时可手动更新）") '现在更新' '暂不' -FocusCancel) { 'Yes' } else { 'No' })
         if ($ansP -eq 'Yes') { Invoke-PanelUpdate -SkipConfirm }
     })
     $script:panelProbeTimer.Start()
@@ -3911,7 +3912,7 @@ $form.Add_Shown({
             $running = @(Get-PackageProcs)
             if ($running.Count -gt 0) {
                 Write-Log ('检测到本包 Edge 正在运行（' + $running.Count + ' 个进程）') 'warn'
-                $ansRun = $(if (Show-DialogAsk 'Edge 正在运行' ("本包 Edge 正在运行（" + $running.Count + " 个进程）。`r`n`r`n" + "瘦身、清理、更新都需要它完全退出，否则会被拒绝。`r`n`r`n" + "现在关掉它吗？先正常关窗口，8 秒后仍未退出的强制结束；不影响系统里其它浏览器。") '关闭 Edge 并继续' '暂不') { 'Yes' } else { 'No' })
+                $ansRun = $(if (Show-DialogAsk 'Edge 正在运行' ("当前便携包 Edge 正在运行（" + $running.Count + " 个进程）。`r`n`r`n" + "执行瘦身、清理或更新前需先退出浏览器。`r`n`r`n" + "是否现在关闭？（先正常关闭窗口，8 秒未退出将强制结束，不影响系统其他浏览器）") '关闭 Edge 并继续' '暂不') { 'Yes' } else { 'No' })
                 if ($ansRun -eq 'Yes') { Close-Edge }
                 else { Write-Log '保持运行；等你要瘦身/清理/备份时，面板会再问一次要不要关。' 'warn' }
             }

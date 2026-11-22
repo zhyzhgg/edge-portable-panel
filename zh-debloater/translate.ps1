@@ -350,6 +350,27 @@ try {
         foreach (`$ch in @(`$ctrl.Controls)) { Ep-FixHeaderTitle `$ch }
     }
     Ep-FixHeaderTitle $formVar
+    # 抗版本漂移收紧分类标签栏：按行为特征定位 FlowLayoutPanel（含 >=5 个 Button），收窄 Padding/Margin 避免「高级覆盖项」孤立折到第 3 行
+    function Ep-CompactTabFlow(`$ctrl) {
+        if (-not `$ctrl) { return }
+        if (`$ctrl -is [System.Windows.Forms.FlowLayoutPanel]) {
+            `$btns = @(`$ctrl.Controls | Where-Object { `$_ -is [System.Windows.Forms.Button] })
+            if (`$btns.Count -ge 5) {
+                if (`$ctrl.Parent) {
+                    `$availW = `$ctrl.Parent.ClientSize.Width - `$ctrl.Left - 12
+                    if (`$availW -gt `$ctrl.Width) { `$ctrl.Width = `$availW }
+                }
+                foreach (`$b in `$btns) {
+                    `$b.AutoSize = `$true
+                    `$b.Padding = New-Object System.Windows.Forms.Padding(6, 2, 6, 2)
+                    `$b.Margin = New-Object System.Windows.Forms.Padding(2, 2, 2, 2)
+                }
+                return
+            }
+        }
+        foreach (`$ch in @(`$ctrl.Controls)) { Ep-CompactTabFlow `$ch }
+    }
+    Ep-CompactTabFlow $formVar
     $formVar.Opacity = 0
     $formVar.Add_Shown({ try { `$this.Refresh(); `$this.Opacity = 1 } catch { `$this.Opacity = 1 } })
 
@@ -371,6 +392,7 @@ public static class EpDebloatTheme {
         `$cSearch  = [System.Drawing.Color]::FromArgb(30, 58, 95)    # 搜索命中深蓝底（替代刺眼亮黄）
         `$cEdge    = [System.Drawing.Color]::FromArgb(58, 68, 92)
         `$cTxt     = [System.Drawing.Color]::FromArgb(241, 245, 249)
+        `$cMuted   = [System.Drawing.Color]::FromArgb(100, 116, 139)  # 已弃用/禁用策略弱化灰（明显区别于正常项）
         function Ep-PaintDark(`$ctrl) {
             if (-not `$ctrl) { return }
             `$bc = `$ctrl.BackColor
@@ -418,16 +440,29 @@ public static class EpDebloatTheme {
                 `$ctrl.BackColor = `$cCard
                 `$ctrl.ForeColor = `$cTxt
             } elseif (`$ctrl -is [System.Windows.Forms.CheckBox]) {
+                `$origFc = `$ctrl.ForeColor
+                `$origGray = (`$origFc.R -ge 90 -and `$origFc.R -le 190 -and [math]::Abs(`$origFc.R - `$origFc.G) -lt 15 -and [math]::Abs(`$origFc.G - `$origFc.B) -lt 15)
+                `$tipStr = ''
+                if (`$script:ToolTip) { try { `$tipStr = [string]`$script:ToolTip.GetToolTip(`$ctrl) } catch { } }
+                `$isDep = (-not `$ctrl.Enabled) -or (-not `$ctrl.AutoCheck) -or `$origGray -or (`$tipStr -match '已弃用|Deprecated|无法启用')
                 `$ctrl.BackColor = [System.Drawing.Color]::Transparent
-                `$ctrl.ForeColor = `$cTxt
-                # 动态拦截：搜索跳转后上游会把命中项 BackColor 设为亮黄（Color.Yellow），即时转为深蓝高亮
+                if (`$isDep) {
+                    `$ctrl.ForeColor = `$cMuted
+                    try { `$ctrl.Font = New-Object System.Drawing.Font(`$ctrl.Font, (`$ctrl.Font.Style -bor [System.Drawing.FontStyle]::Strikeout)) } catch { }
+                } else {
+                    `$ctrl.ForeColor = `$cTxt
+                }
+                # 动态拦截：搜索跳转后上游会把命中项 BackColor 设为亮黄（Color.Yellow），即时转为深蓝高亮（保留弃用项灰字）
                 `$ctrl.Add_BackColorChanged({
                     if (`$script:epInTheme) { return }
                     `$b1 = `$this.BackColor
                     if (`$b1.R -gt 200 -and `$b1.G -gt 200 -and `$b1.B -lt 120) {
                         `$script:epInTheme = `$true
-                        try { `$this.BackColor = `$cSearch; `$this.ForeColor = `$cTxt }
-                        finally { `$script:epInTheme = `$false }
+                        try {
+                            `$this.BackColor = `$cSearch
+                            `$isD = (-not `$this.Enabled) -or (-not `$this.AutoCheck) -or (`$this.Font -and `$this.Font.Strikeout)
+                            `$this.ForeColor = if (`$isD) { `$cMuted } else { `$cTxt }
+                        } finally { `$script:epInTheme = `$false }
                     }
                 })
             } elseif (`$ctrl -is [System.Windows.Forms.Label]) {
