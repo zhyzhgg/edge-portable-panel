@@ -851,13 +851,9 @@ function Invoke-Ps([string]$scriptPath, [string[]]$argList) {
 
 # ---------------- 状态刷新 ----------------
 function Get-StatusCachePath {
-    # 运行时目录跟着包走（Host 传 EP_RUNTIME）；偶尔没有时回退用户目录。路径只解析一次
+    # 复用 Get-RuntimeCacheDir，路径只解析一次
     if ($script:statusCachePath) { return $script:statusCachePath }
-    $root = $env:EP_RUNTIME
-    if (-not $root) { $root = Join-Path $env:LOCALAPPDATA 'EdgePanel' }
-    $d = Join-Path $root 'cache'
-    if (-not (Test-Path -LiteralPath $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
-    $script:statusCachePath = Join-Path $d 'status.json'
+    $script:statusCachePath = Join-Path (Get-RuntimeCacheDir) 'status.json'
     return $script:statusCachePath
 }
 
@@ -1237,13 +1233,31 @@ function Update-Status {
     }
 }
 
+function Save-PolicySnapshot([int]$keep = 5) {
+    # 写入策略前只读导出当前策略键快照（无需提权，几 KB），便于随时回滚
+    try {
+        $regPath = $script:policyKey -replace '^HKCU:', 'HKCU'
+        if (-not (Test-Path -LiteralPath $script:policyKey)) { return }
+        $snapDir = Join-Path (Get-RuntimeCacheDir) 'policy-snapshots'
+        if (-not (Test-Path -LiteralPath $snapDir)) { New-Item -ItemType Directory -Path $snapDir -Force | Out-Null }
+        $snapFile = Join-Path $snapDir ('policy_' + (Get-Date).ToString('yyyyMMdd-HHmmss') + '.reg')
+        & reg.exe export $regPath $snapFile /y 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $snapFile)) {
+            Write-Log ('已自动保存策略快照：' + (Split-Path $snapFile -Leaf))
+            $all = @(Get-ChildItem -LiteralPath $snapDir -Filter 'policy_*.reg' -File -ErrorAction SilentlyContinue | Sort-Object Name -Descending)
+            if ($all.Count -gt $keep) { $all | Select-Object -Skip $keep | Remove-Item -Force -ErrorAction SilentlyContinue }
+        }
+    } catch { Write-Log ('策略快照导出失败（不阻断写入）：' + $_.Exception.Message) 'warn' }
+}
+
 function Import-PolicyReg([string]$regFile, [string]$okLog = '策略导入完成') {
-    # 唯一实现：把 .reg 经 UAC helper 导入策略键并解析结果（策略键对普通用户只读，必须提权）
+    # 唯一实现：先留只读快照，再经 UAC helper 导入策略键并解析结果（策略键对普通用户只读，必须提权）
+    Save-PolicySnapshot
     $stamp = (Get-Date).ToString('HHmmssfff')
     $helper = Join-Path $env:TEMP ('edgepanel-import-' + $stamp + '.ps1')
     $result = Join-Path $env:TEMP ('edgepanel-import-result-' + $stamp + '.txt')
     $helperCode = @'
-param([string]$RegFile, [string]$ResultFile, [string]$KeyPath)
+param([string]$RegFile, [string]$ResultFile)
 $lines = New-Object System.Collections.Generic.List[string]
 try {
     $out2 = & reg.exe import $RegFile 2>&1
@@ -1261,8 +1275,7 @@ try {
     try {
         $psi = @(
             '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $helper + '"'),
-            '-RegFile', ('"' + $regFile + '"'), '-ResultFile', ('"' + $result + '"'),
-            '-KeyPath', ('"' + ($script:policyKey -replace '^HKCU:', 'HKCU') + '"')
+            '-RegFile', ('"' + $regFile + '"'), '-ResultFile', ('"' + $result + '"')
         )
         Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
             -ArgumentList $psi -Verb RunAs -WindowStyle Hidden -Wait | Out-Null
@@ -3753,9 +3766,9 @@ function Invoke-PanelUpdate([switch]$SkipConfirm) {
         if (-not $exeAsset) {
             # 约定式地址：Release 附件名固定为 EdgePanel.exe / SHA256SUMS.txt
             $dlBase = 'https://github.com/' + $script:panelUpdateRepo.Trim('/') + '/releases/download/' + $(if ($rawTag) { $rawTag } else { $tagVerText })
-            $panelLatestInfo = @{ Version = $tagVerText; ExeUrl = ($dlBase + '/EdgePanel.exe'); ShaUrl = ($dlBase + '/SHA256SUMS.txt') }
+            $panelLatestInfo = @{ Version = $tagVerText; ExeUrl = ($dlBase + '/EdgePanel.exe'); ShaUrl = ($dlBase + '/SHA256SUMS.txt'); Digest = '' }
         } else {
-            $panelLatestInfo = @{ Version = $tagVerText; ExeUrl = [string]$exeAsset.browser_download_url; ShaUrl = $(if ($shaAsset) { [string]$shaAsset.browser_download_url } else { '' }) }
+            $panelLatestInfo = @{ Version = $tagVerText; ExeUrl = [string]$exeAsset.browser_download_url; ShaUrl = $(if ($shaAsset) { [string]$shaAsset.browser_download_url } else { '' }); Digest = $(if ($exeAsset.digest) { [string]$exeAsset.digest } else { '' }) }
         }
         Set-PanelUpdateHighlight $true
         Write-Log ('发现面板新版本：v' + $script:panelVersion + ' → v' + $tagVerText) 'warn'
@@ -3796,8 +3809,13 @@ function Invoke-PanelUpdate([switch]$SkipConfirm) {
         $dlRes = $dlOut | ConvertFrom-Json
         if (-not $dlRes -or -not $dlRes.ok -or -not (Test-Path -LiteralPath $newExe)) { throw ('下载新版面板失败：' + $(if ($dlRes) { $dlRes.error } else { '未知错误' })) }
 
-        # SHA256 校验（Release 带 SHA256SUMS.txt 时强制核对）
-        if ($panelLatestInfo.ShaUrl) {
+        # SHA256 强制校验：优先用 GitHub API asset.digest，其次拉 SHA256SUMS.txt；两者均不可得时中止替换（绝不静默降级）
+        $expectSha = ''
+        if ($panelLatestInfo.Digest) {
+            $mDig = [regex]::Match($panelLatestInfo.Digest, '(?i)\b([0-9a-f]{64})\b')
+            if ($mDig.Success) { $expectSha = $mDig.Groups[1].Value.ToLowerInvariant() }
+        }
+        if (-not $expectSha -and $panelLatestInfo.ShaUrl) {
             $shaText = ''
             foreach ($su in @(('https://gh-proxy.org/' + $panelLatestInfo.ShaUrl), ('https://ghfast.top/' + $panelLatestInfo.ShaUrl), $panelLatestInfo.ShaUrl)) {
                 try {
@@ -3809,14 +3827,14 @@ function Invoke-PanelUpdate([switch]$SkipConfirm) {
                 } catch { }
             }
             $mSha = [regex]::Match($shaText, '(?i)\b([0-9a-f]{64})\b')
-            if ($mSha.Success) {
-                $shaObj = [System.Security.Cryptography.SHA256]::Create()
-                $fs = [System.IO.File]::OpenRead($newExe)
-                try { $gotSha = ([BitConverter]::ToString($shaObj.ComputeHash($fs)) -replace '-', '').ToLowerInvariant() } finally { $fs.Dispose(); $shaObj.Dispose() }
-                if ($gotSha -ne $mSha.Groups[1].Value.ToLowerInvariant()) { throw 'SHA256 校验不通过，已中止替换' }
-                Write-Log '新版面板 SHA256 校验通过' 'ok'
-            }
+            if ($mSha.Success) { $expectSha = $mSha.Groups[1].Value.ToLowerInvariant() }
         }
+        if (-not $expectSha) { throw '未能获取新版 SHA256 校验值（已尝试 API digest 与 SHA256SUMS.txt），为安全起见已中止替换' }
+        $shaObj = [System.Security.Cryptography.SHA256]::Create()
+        $fs = [System.IO.File]::OpenRead($newExe)
+        try { $gotSha = ([BitConverter]::ToString($shaObj.ComputeHash($fs)) -replace '-', '').ToLowerInvariant() } finally { $fs.Dispose(); $shaObj.Dispose() }
+        if ($gotSha -ne $expectSha) { throw 'SHA256 校验不通过，已中止替换' }
+        Write-Log '新版面板 SHA256 校验通过' 'ok'
 
         # 替换"当前正在运行的这个 EXE"：宿主通过 EP_EXEPATH 传入真实路径（用户可能把文件改名成 EdgePanel.exe）
         $curExe = [string]$env:EP_EXEPATH

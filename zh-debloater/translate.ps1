@@ -360,6 +360,7 @@ try {
                     `$availW = `$ctrl.Parent.ClientSize.Width - `$ctrl.Left - 12
                     if (`$availW -gt `$ctrl.Width) { `$ctrl.Width = `$availW }
                 }
+                `$script:epTabHits = `$btns.Count
                 foreach (`$b in `$btns) {
                     `$b.AutoSize = `$true
                     `$b.Padding = New-Object System.Windows.Forms.Padding(6, 2, 6, 2)
@@ -370,6 +371,7 @@ try {
         }
         foreach (`$ch in @(`$ctrl.Controls)) { Ep-CompactTabFlow `$ch }
     }
+    `$script:epTabHits = 0
     Ep-CompactTabFlow $formVar
     $formVar.Opacity = 0
     $formVar.Add_Shown({ try { `$this.Refresh(); `$this.Opacity = 1 } catch { `$this.Opacity = 1 } })
@@ -478,6 +480,7 @@ public static class EpDebloatTheme {
         }
         `$script:epInTheme = `$true
         try { Ep-PaintDark $formVar } finally { `$script:epInTheme = `$false }
+        try { Write-Output ('[EP-INJECT] dark=1 tabHits=' + `$script:epTabHits) } catch { }
         if ($formVar.IsHandleCreated) { [EpDebloatTheme]::Title($formVar.Handle) }
         # 深色锐利 ToolTip（OwnerDraw + TextRenderer 7 参 ClearType）
         if (`$script:ToolTip) {
@@ -514,7 +517,8 @@ public static class EpDebloatTheme {
         $outText = $outText.Insert($idxShow, $darkSnippet + "`r`n")
         $dpiHead = @'
 try {
-    Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class EpDebloatDpi { [DllImport("shcore.dll")] public static extern int SetProcessDpiAwareness(int v); [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); }' -ErrorAction SilentlyContinue
+    Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class EpDebloatDpi { [DllImport("shcore.dll")] public static extern int SetProcessDpiAwareness(int v); [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow(); [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int n); }' -ErrorAction SilentlyContinue
+    try { $hc = [EpDebloatDpi]::GetConsoleWindow(); if ($hc -ne [IntPtr]::Zero) { [void][EpDebloatDpi]::ShowWindow($hc, 0) } } catch { }
     try { [void][EpDebloatDpi]::SetProcessDpiAwareness(1) } catch { try { [void][EpDebloatDpi]::SetProcessDPIAware() } catch { } }
 } catch { }
 '@
