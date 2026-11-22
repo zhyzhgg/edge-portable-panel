@@ -2846,7 +2846,13 @@ function Open-PolicyGui {
         } catch { Write-Log ('主题文件写入失败（策略窗口可能跟随系统色）：' + $_.Exception.Message) 'warn' }
         $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
         $zhDir = Split-Path $runZh -Parent
-        $outPs1 = Join-Path (Join-Path $zhDir 'work') 'out.ps1'
+        # 中文副本位置必须与 run-zh.ps1 的 $work 保持一致（.210 起搬到了共享目录，不再随解包键变化）
+        $outPs1 = Join-Path (Join-Path (Join-Path $env:LOCALAPPDATA 'EdgePanel') '_shared\zh-work') 'out.ps1'
+        if (-not $env:LOCALAPPDATA -or -not (Test-Path -LiteralPath $outPs1)) {
+            # 兼容旧位置（run-zh 在 LOCALAPPDATA 缺失时才回退到脚本同级 work\）
+            $legacy = Join-Path (Join-Path $zhDir 'work') 'out.ps1'
+            if (Test-Path -LiteralPath $legacy) { $outPs1 = $legacy }
+        }
         $upSrc = Join-Path $edgeRoot 'debloater-gui.ps1'
         # 快路径：中文副本已生成且不比上游脚本旧 ⇒ 直接拉起它，省掉"下载 + 翻译 + 一次冷启动"
         $fast = $false
