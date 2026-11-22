@@ -535,29 +535,51 @@ $lblTitle.AutoSize = $true
 $lblTitle.Location = New-Object System.Drawing.Point((S 18), (S 6))
 $header.Controls.Add($lblTitle)
 
-# 顶栏轻量入口：项目主页与问题列表页（位于标题右侧净空 X=276..402, Y=15..35，不挤压任何卡片）
+# 顶栏轻量入口：按标题实际高度居中并下移 1px 对齐小字排版基线（1× 落 y=12）；GitHub 左侧 GDI+ 自绘 14×14 单色矢量 Octocat
+$lnkH = S 20
+$lnkY = $lblTitle.Top + [int](($lblTitle.PreferredHeight - $lnkH) / 2) + (S 1)
 $lnkRepo = New-Object System.Windows.Forms.Label
 $lnkRepo.Text = 'GitHub'
 $lnkRepo.Font = $fontSmall
 $lnkRepo.ForeColor = $clrOnDarkMuted
 $lnkRepo.AutoSize = $false
 $lnkRepo.TextAlign = 'MiddleLeft'
-$lnkRepo.Location = New-Object System.Drawing.Point((S 276), (S 15))
-$lnkRepo.Size = New-Object System.Drawing.Size((S 54), (S 20))
+$lnkRepo.Padding = New-Object System.Windows.Forms.Padding((S 18), 0, 0, 0)
+$lnkRepo.Location = New-Object System.Drawing.Point((S 274), $lnkY)
+$lnkRepo.Size = New-Object System.Drawing.Size((S 78), $lnkH)
 $lnkRepo.Cursor = 'Hand'
+$lnkRepo.Add_Paint({
+    param($s, $e)
+    $g = $e.Graphics
+    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $sz = [float](S 14)
+    $ox = 1.0; $oy = ([float]$s.Height - $sz) / 2.0
+    $k = $sz / 16.0
+    $br = New-Object System.Drawing.SolidBrush($s.ForeColor)
+    $bg = New-Object System.Drawing.SolidBrush($clrHeader)
+    try {
+        # GitHub Octocat 16×16 简化矢量轮廓（单色跟随 ForeColor，悬停同步变强调蓝）
+        $g.FillEllipse($br, $ox, $oy, $sz, $sz)
+        $g.FillEllipse($bg, ($ox + 3.6 * $k), ($oy + 3.6 * $k), (8.8 * $k), (7.0 * $k))
+        $eL = [System.Drawing.PointF[]]@([System.Drawing.PointF]::new(($ox + 4.0 * $k), ($oy + 5.2 * $k)), [System.Drawing.PointF]::new(($ox + 4.4 * $k), ($oy + 2.3 * $k)), [System.Drawing.PointF]::new(($ox + 6.7 * $k), ($oy + 4.0 * $k)))
+        $eR = [System.Drawing.PointF[]]@([System.Drawing.PointF]::new(($ox + 12.0 * $k), ($oy + 5.2 * $k)), [System.Drawing.PointF]::new(($ox + 11.6 * $k), ($oy + 2.3 * $k)), [System.Drawing.PointF]::new(($ox + 9.3 * $k), ($oy + 4.0 * $k)))
+        $g.FillPolygon($bg, $eL); $g.FillPolygon($bg, $eR)
+        $g.FillRectangle($bg, ($ox + 5.8 * $k), ($oy + 10.2 * $k), (4.4 * $k), (6.0 * $k))
+    } finally { $br.Dispose(); $bg.Dispose() }
+})
 $lnkRepo.Add_Click({ if ($script:panelUpdateRepo) { try { Start-Process ('https://github.com/' + $script:panelUpdateRepo.Trim('/')) } catch { } } })
-$lnkRepo.Add_MouseEnter({ $lnkRepo.ForeColor = $clrHeaderAccent })
-$lnkRepo.Add_MouseLeave({ $lnkRepo.ForeColor = $clrOnDarkMuted })
+$lnkRepo.Add_MouseEnter({ $lnkRepo.ForeColor = $clrHeaderAccent; $lnkRepo.Invalidate() })
+$lnkRepo.Add_MouseLeave({ $lnkRepo.ForeColor = $clrOnDarkMuted; $lnkRepo.Invalidate() })
 $header.Controls.Add($lnkRepo)
 
 $lnkIssues = New-Object System.Windows.Forms.Label
-$lnkIssues.Text = '反馈问题'
+$lnkIssues.Text = '反馈'
 $lnkIssues.Font = $fontSmall
 $lnkIssues.ForeColor = $clrOnDarkMuted
 $lnkIssues.AutoSize = $false
 $lnkIssues.TextAlign = 'MiddleLeft'
-$lnkIssues.Location = New-Object System.Drawing.Point((S 334), (S 15))
-$lnkIssues.Size = New-Object System.Drawing.Size((S 68), (S 20))
+$lnkIssues.Location = New-Object System.Drawing.Point((S 356), $lnkY)
+$lnkIssues.Size = New-Object System.Drawing.Size((S 40), $lnkH)
 $lnkIssues.Cursor = 'Hand'
 $lnkIssues.Add_Click({ if ($script:panelUpdateRepo) { try { Start-Process ('https://github.com/' + $script:panelUpdateRepo.Trim('/') + '/issues') } catch { } } })
 $lnkIssues.Add_MouseEnter({ $lnkIssues.ForeColor = $clrHeaderAccent })
@@ -821,10 +843,12 @@ $logCard.BorderColor = $clrCardEdge
 $logCard.Padding = New-Object System.Windows.Forms.Padding((S 10), (S 8), (S 10), (S 8))
 $form.Controls.Add($logCard)
 
-$log = New-Object System.Windows.Forms.TextBox
+$log = New-Object System.Windows.Forms.RichTextBox
 $log.Multiline = $true
-$log.ScrollBars = 'Vertical'
+$log.ScrollBars = [System.Windows.Forms.RichTextBoxScrollBars]::Vertical
 $log.ReadOnly = $true
+$log.DetectUrls = $false
+$log.HideSelection = $false
 $log.BorderStyle = 'None'
 $log.BackColor = $clrCard
 $log.ForeColor = $clrLogText
@@ -849,12 +873,23 @@ if ($maxH -lt $wantH) {
 # ---------------- 日志 / 忙碌态 ----------------
 function Write-Log([string]$text, [string]$level = 'info') {
     $t = (Get-Date).ToString('HH:mm:ss')
-    # 级别必须是「2 个全角汉字」宽：实测雅黑 8.5pt 下「完成/警告/失败/信息」都是 39 px，而 U+2500 只有 31 px（会错位 8 px）
+    # 级别必须是「2 个全角汉字」宽：实测雅黑 8.5pt 下「完成/警告/失败/信息」都是 39 px
     $tag = switch ($level) { 'ok' { '完成' } 'warn' { '警告' } 'err' { '失败' } default { '信息' } }
+    # 仅给 2 字级别列着色（全部复用现有色板）：warn 按用户要求用红色 $clrBad（如需琥珀橙可改为 $clrWarn）
+    $tagClr = switch ($level) { 'ok' { $clrGo } 'warn' { $clrBad } 'err' { $clrBad } default { $clrMuted } }
     $line = "$t │ $tag │ $text"
     Write-Host $line
     if ($log -and -not $log.IsDisposed) {
-        $log.AppendText($line + "`r`n") | Out-Null
+        $log.SelectionStart = $log.TextLength
+        $log.SelectionLength = 0
+        $log.SelectionColor = $clrMuted
+        $log.AppendText("$t │ ")
+        $log.SelectionColor = $tagClr
+        $log.AppendText($tag)
+        $log.SelectionColor = $clrMuted
+        $log.AppendText(' │ ')
+        $log.SelectionColor = $clrLogText
+        $log.AppendText($text + "`r`n")
         $log.SelectionStart = $log.TextLength
         $log.ScrollToCaret()
     }
@@ -2908,9 +2943,17 @@ function Open-PolicyGui {
                 }
             } catch { Write-Log ('chrome++.ini 同步失败（策略键可能不对）：' + $_.Exception.Message) 'warn' }
             Write-Log '启动中文策略界面（快路径直接提权拉起，请在 UAC 中点「是」）…'
-            $script:policyGuiProc = Start-Process -FilePath $psExe `
-                -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"' + $outPs1 + '"')) `
-                -WorkingDirectory $zhDir -Verb RunAs -PassThru
+            $hostExe = [string]$env:EP_EXEPATH
+            if ($hostExe -and (Test-Path -LiteralPath $hostExe)) {
+                # 经 GUI 子系统宿主（winexe）提权，再以 CreateNoWindow 拉起 PowerShell：彻底消除蓝窗闪现（0.00 s）
+                $script:policyGuiProc = Start-Process -FilePath $hostExe `
+                    -ArgumentList @('--elevated-run', ('"' + $outPs1 + '"'), ('"' + $zhDir + '"')) `
+                    -WorkingDirectory $zhDir -Verb RunAs -PassThru
+            } else {
+                $script:policyGuiProc = Start-Process -FilePath $psExe `
+                    -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"' + $outPs1 + '"')) `
+                    -WorkingDirectory $zhDir -Verb RunAs -PassThru
+            }
         } else {
             Write-Log '启动中文策略界面（首次需下载/翻译上游脚本，稍慢；之后会快）…'
             $useSkip = Test-Path -LiteralPath $upSrc

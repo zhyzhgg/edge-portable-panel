@@ -12,7 +12,7 @@ using System.Text.RegularExpressions;
 internal static class Host
 {
     // 资源版本号：内容变了就改这里，触发重新解包
-    private const string ResourceVersion = "2026-11-21.218";   // 解包目录键（每次改内容 -Bump）
+    private const string ResourceVersion = "2026-11-21.220";   // 解包目录键（每次改内容 -Bump）
     private const string ProductVersion = "v1.3.4";   // 必须与 EdgePanel.ps1 的 $script:panelVersion 一致（build.ps1 自动校验）
     private const string FallbackFolderName = "EdgePanel";
 
@@ -61,8 +61,43 @@ internal static class Host
     }
 
     [STAThread]
+    private static int RunElevatedScript(string scriptPath, string workDir)
+    {
+        // 仅允许执行本面板运行时目录（%LOCALAPPDATA%\EdgePanel\ 或 EP_RUNTIME）下的 .ps1，防止滥用
+        try
+        {
+            string full = Path.GetFullPath(scriptPath);
+            string defRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), FallbackFolderName);
+            string ovRoot = Environment.GetEnvironmentVariable("EP_RUNTIME");
+            bool allowed = full.StartsWith(defRoot.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase)
+                || (!string.IsNullOrEmpty(ovRoot) && full.StartsWith(ovRoot.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase));
+            if (!allowed || !full.EndsWith(".ps1", StringComparison.OrdinalIgnoreCase) || !File.Exists(full)) return 5;
+            var psi = new ProcessStartInfo
+            {
+                FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe"),
+                Arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File \"" + full + "\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = (!string.IsNullOrEmpty(workDir) && Directory.Exists(workDir)) ? workDir : Path.GetDirectoryName(full)
+            };
+            using (var p = Process.Start(psi))
+            {
+                if (p != null) { p.WaitForExit(); return p.ExitCode; }
+            }
+            return 0;
+        }
+        catch { return 6; }
+    }
+
     private static int Main(string[] args)
     {
+        // 零蓝窗提权模式：GUI 子系统本身无控制台，提权后再以 CreateNoWindow 拉起 PowerShell，彻底消除蓝窗闪现（跳过单实例 Mutex）
+        if (args != null && args.Length >= 2 && string.Equals(args[0], "--elevated-run", StringComparison.OrdinalIgnoreCase))
+        {
+            string wd = args.Length >= 3 ? args[2] : null;
+            return RunElevatedScript(args[1], wd);
+        }
+
         string exeDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
 
         // ---- 单实例守卫（必须放在解包之前：避免第二个实例重复解包、重复写日志）----
