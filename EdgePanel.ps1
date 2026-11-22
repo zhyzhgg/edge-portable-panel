@@ -17,6 +17,7 @@ $script:panelProbeTimer = $null
 $script:panelProbeDelay = $null
 $script:pwaGapChecked = $false
 $script:panelProbeDone = $false
+$script:panelProbeCancel = $null
 $script:policyKey = $env:EP_POLICY_KEY
 
 # ---------- 引导：脚本目录（EXE 解包目录）与包根（EXE 所在目录）----------
@@ -511,8 +512,10 @@ $form.Add_FormClosing({
     if ($script:policyWatch) { try { $script:policyWatch.Stop(); $script:policyWatch.Dispose() } catch { } }
     foreach ($tm in @($script:panelProbeDelay, $script:panelProbeTimer)) { if ($tm) { try { $tm.Stop(); $tm.Dispose() } catch { } } }
     $script:panelProbeDelay = $null; $script:panelProbeTimer = $null
-    if ($script:panelProbePs) { try { [void]$script:panelProbePs.BeginStop($null, $null) } catch { }; try { $script:panelProbePs.Dispose() } catch { }; $script:panelProbePs = $null }
-    if ($script:panelProbeRs) { try { $script:panelProbeRs.Dispose() } catch { }; $script:panelProbeRs = $null }
+    if ($script:panelProbeCancel) { try { $script:panelProbeCancel['Stop'] = $true } catch { } }
+    if ($script:panelProbePs) { try { [void]$script:panelProbePs.BeginStop($null, $null) } catch { }; $script:panelProbePs = $null }
+    $script:panelProbeRs = $null
+    if ($script:ghIconPath) { try { $script:ghIconPath.Dispose() } catch { }; $script:ghIconPath = $null }
 })
 
 $header = New-Object System.Windows.Forms.Panel
@@ -535,46 +538,67 @@ $lblTitle.AutoSize = $true
 $lblTitle.Location = New-Object System.Drawing.Point((S 18), (S 6))
 $header.Controls.Add($lblTitle)
 
-# 顶栏轻量入口：按标题实际高度居中并下移 1px 对齐小字排版基线（1× 落 y=12）；GitHub 左侧 GDI+ 自绘 14×14 单色矢量 Octocat
+# 顶栏轻量入口：与左标题 v1.3.4 底基线对齐（1× 落 y=10，避开下方路径行）；GitHub 左侧采用官方 24 网格矢量 Octocat 并缓存路径
 $lnkH = S 20
-$lnkY = $lblTitle.Top + [int](($lblTitle.PreferredHeight - $lnkH) / 2) + (S 1)
+$lnkY = $lblTitle.Top + [int](($lblTitle.PreferredHeight - $lnkH) / 2) - (S 1)
 $lnkRepo = New-Object System.Windows.Forms.Label
 $lnkRepo.Text = 'GitHub'
 $lnkRepo.Font = $fontSmall
 $lnkRepo.ForeColor = $clrOnDarkMuted
 $lnkRepo.AutoSize = $false
 $lnkRepo.TextAlign = 'MiddleLeft'
-$lnkRepo.Padding = New-Object System.Windows.Forms.Padding((S 18), 0, 0, 0)
+$lnkRepo.Padding = New-Object System.Windows.Forms.Padding((S 20), 0, 0, 0)
 $lnkRepo.Location = New-Object System.Drawing.Point((S 274), $lnkY)
-$lnkRepo.Size = New-Object System.Drawing.Size((S 78), $lnkH)
+$lnkRepo.Size = New-Object System.Drawing.Size((S 80), $lnkH)
 $lnkRepo.Cursor = 'Hand'
+# 官方 GitHub Octicons mark-github-24 精确矢量路径（24 网格圆底镂空版，FillMode=Alternate，一次性构建并缓存至关窗释放）
+$script:ghIconPath = & {
+    $sz = [float](S 16)
+    $k = $sz / 24.0
+    $ox = 0.5
+    $oy = ([float]$lnkH - $sz) / 2.0 - 0.5
+    $ghPath = New-Object System.Drawing.Drawing2D.GraphicsPath
+    $ghPath.StartFigure()
+    $ghPath.AddBezier(($ox+10.2260*$k), ($oy+17.2840*$k), ($ox+7.2610*$k), ($oy+16.9240*$k), ($ox+5.1720*$k), ($oy+14.7910*$k), ($ox+5.1720*$k), ($oy+12.0280*$k))
+    $ghPath.AddBezier(($ox+5.1720*$k), ($oy+12.0280*$k), ($ox+5.1720*$k), ($oy+10.9050*$k), ($ox+5.5760*$k), ($oy+9.6920*$k), ($ox+6.2500*$k), ($oy+8.8840*$k))
+    $ghPath.AddBezier(($ox+6.2500*$k), ($oy+8.8840*$k), ($ox+5.9580*$k), ($oy+8.1430*$k), ($ox+6.0030*$k), ($oy+6.5700*$k), ($ox+6.3400*$k), ($oy+5.9190*$k))
+    $ghPath.AddBezier(($ox+6.3400*$k), ($oy+5.9190*$k), ($ox+7.2380*$k), ($oy+5.8070*$k), ($ox+8.4510*$k), ($oy+6.2790*$k), ($ox+9.1700*$k), ($oy+6.9290*$k))
+    $ghPath.AddBezier(($ox+9.1700*$k), ($oy+6.9290*$k), ($ox+10.0230*$k), ($oy+6.6600*$k), ($ox+10.9220*$k), ($oy+6.5250*$k), ($ox+12.0230*$k), ($oy+6.5250*$k))
+    $ghPath.AddBezier(($ox+12.0230*$k), ($oy+6.5250*$k), ($ox+13.1230*$k), ($oy+6.5250*$k), ($ox+14.0220*$k), ($oy+6.6600*$k), ($ox+14.8300*$k), ($oy+6.9070*$k))
+    $ghPath.AddBezier(($ox+14.8300*$k), ($oy+6.9070*$k), ($ox+15.5260*$k), ($oy+6.2780*$k), ($ox+16.7620*$k), ($oy+5.8070*$k), ($ox+17.6600*$k), ($oy+5.9190*$k))
+    $ghPath.AddBezier(($ox+17.6600*$k), ($oy+5.9190*$k), ($ox+17.9750*$k), ($oy+6.5250*$k), ($ox+18.0200*$k), ($oy+8.0980*$k), ($ox+17.7270*$k), ($oy+8.8610*$k))
+    $ghPath.AddBezier(($ox+17.7270*$k), ($oy+8.8610*$k), ($ox+18.4470*$k), ($oy+9.7150*$k), ($ox+18.8280*$k), ($oy+10.8610*$k), ($ox+18.8280*$k), ($oy+12.0280*$k))
+    $ghPath.AddBezier(($ox+18.8280*$k), ($oy+12.0280*$k), ($ox+18.8280*$k), ($oy+14.7910*$k), ($ox+16.7390*$k), ($oy+16.8800*$k), ($ox+13.7300*$k), ($oy+17.2620*$k))
+    $ghPath.AddBezier(($ox+13.7300*$k), ($oy+17.2620*$k), ($ox+14.4930*$k), ($oy+17.7560*$k), ($ox+15.0100*$k), ($oy+18.8340*$k), ($ox+15.0100*$k), ($oy+20.0690*$k))
+    $ghPath.AddLine(($ox+15.0100*$k), ($oy+20.0690*$k), ($ox+15.0100*$k), ($oy+22.4050*$k))
+    $ghPath.AddBezier(($ox+15.0100*$k), ($oy+22.4050*$k), ($ox+15.0100*$k), ($oy+23.0790*$k), ($ox+15.5710*$k), ($oy+23.4610*$k), ($ox+16.2450*$k), ($oy+23.1910*$k))
+    $ghPath.AddBezier(($ox+16.2450*$k), ($oy+23.1910*$k), ($ox+20.3110*$k), ($oy+21.6410*$k), ($ox+23.5000*$k), ($oy+17.5760*$k), ($ox+23.5000*$k), ($oy+12.5450*$k))
+    $ghPath.AddBezier(($ox+23.5000*$k), ($oy+12.5450*$k), ($ox+23.5000*$k), ($oy+6.1880*$k), ($ox+18.3340*$k), ($oy+1.0000*$k), ($ox+11.9780*$k), ($oy+1.0000*$k))
+    $ghPath.AddBezier(($ox+11.9780*$k), ($oy+1.0000*$k), ($ox+5.6200*$k), ($oy+1.0000*$k), ($ox+0.5000*$k), ($oy+6.1880*$k), ($ox+0.5000*$k), ($oy+12.5450*$k))
+    $ghPath.AddBezier(($ox+0.5000*$k), ($oy+12.5450*$k), ($ox+0.5000*$k), ($oy+17.5310*$k), ($ox+3.6670*$k), ($oy+21.6650*$k), ($ox+7.9350*$k), ($oy+23.2140*$k))
+    $ghPath.AddBezier(($ox+7.9350*$k), ($oy+23.2140*$k), ($ox+8.5410*$k), ($oy+23.4390*$k), ($ox+9.1250*$k), ($oy+23.0340*$k), ($ox+9.1250*$k), ($oy+22.4280*$k))
+    $ghPath.AddLine(($ox+9.1250*$k), ($oy+22.4280*$k), ($ox+9.1250*$k), ($oy+20.6300*$k))
+    $ghPath.AddBezier(($ox+9.1250*$k), ($oy+20.6300*$k), ($ox+8.7833*$k), ($oy+20.7728*$k), ($ox+8.4173*$k), ($oy+20.8489*$k), ($ox+8.0470*$k), ($oy+20.8540*$k))
+    $ghPath.AddBezier(($ox+8.0470*$k), ($oy+20.8540*$k), ($ox+6.5640*$k), ($oy+20.8540*$k), ($ox+5.6880*$k), ($oy+20.0460*$k), ($ox+5.0600*$k), ($oy+18.5410*$k))
+    $ghPath.AddBezier(($ox+5.0600*$k), ($oy+18.5410*$k), ($ox+4.8130*$k), ($oy+17.9340*$k), ($ox+4.5430*$k), ($oy+17.5750*$k), ($ox+4.0260*$k), ($oy+17.5080*$k))
+    $ghPath.AddBezier(($ox+4.0260*$k), ($oy+17.5080*$k), ($ox+3.7560*$k), ($oy+17.4850*$k), ($ox+3.6670*$k), ($oy+17.3730*$k), ($ox+3.6670*$k), ($oy+17.2380*$k))
+    $ghPath.AddBezier(($ox+3.6670*$k), ($oy+17.2380*$k), ($ox+3.6670*$k), ($oy+16.9680*$k), ($ox+4.1170*$k), ($oy+16.7670*$k), ($ox+4.5650*$k), ($oy+16.7670*$k))
+    $ghPath.AddBezier(($ox+4.5650*$k), ($oy+16.7670*$k), ($ox+5.2170*$k), ($oy+16.7670*$k), ($ox+5.7780*$k), ($oy+17.1710*$k), ($ox+6.3620*$k), ($oy+18.0020*$k))
+    $ghPath.AddBezier(($ox+6.3620*$k), ($oy+18.0020*$k), ($ox+6.8120*$k), ($oy+18.6530*$k), ($ox+7.2830*$k), ($oy+18.9450*$k), ($ox+7.8450*$k), ($oy+18.9450*$k))
+    $ghPath.AddBezier(($ox+7.8450*$k), ($oy+18.9450*$k), ($ox+8.4060*$k), ($oy+18.9450*$k), ($ox+8.7650*$k), ($oy+18.7430*$k), ($ox+9.2820*$k), ($oy+18.2260*$k))
+    $ghPath.AddBezier(($ox+9.2820*$k), ($oy+18.2260*$k), ($ox+9.6640*$k), ($oy+17.8450*$k), ($ox+9.9560*$k), ($oy+17.5080*$k), ($ox+10.2260*$k), ($oy+17.2830*$k))
+    $ghPath.CloseFigure()
+    $ghPath.FillMode = [System.Drawing.Drawing2D.FillMode]::Alternate
+    $ghPath
+}
 $lnkRepo.Add_Paint({
     param($s, $e)
-    # 单色实心剪影：圆脸 + 两只尖耳 + 两侧垂下的手（14px 下仍能看出三段结构）
+    if (-not $script:ghIconPath) { return }
     $g = $e.Graphics
     $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-    $k = ([float](S 14)) / 16.0
-    $ox = 1.0
-    $oy = ([float]$s.Height - 14.0 * $k) / 2.0 - $k
+    $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
     $br = New-Object System.Drawing.SolidBrush($s.ForeColor)
-    $p = New-Object System.Drawing.Drawing2D.GraphicsPath
-    try {
-        # 两只耳（朝上）
-        $p.AddPolygon([System.Drawing.PointF[]]@(
-            [System.Drawing.PointF]::new($ox + 2.8 * $k, $oy + 4.5 * $k),
-            [System.Drawing.PointF]::new($ox + 5.7 * $k, $oy + 1.1 * $k),
-            [System.Drawing.PointF]::new($ox + 6.9 * $k, $oy + 4.2 * $k)))
-        $p.AddPolygon([System.Drawing.PointF[]]@(
-            [System.Drawing.PointF]::new($ox + 13.2 * $k, $oy + 4.5 * $k),
-            [System.Drawing.PointF]::new($ox + 10.3 * $k, $oy + 1.1 * $k),
-            [System.Drawing.PointF]::new($ox + 9.1 * $k, $oy + 4.2 * $k)))
-        # 脸
-        $p.AddEllipse($ox + 2.5 * $k, $oy + 3.3 * $k, 11.0 * $k, 10.4 * $k)
-        # 两只手（垂在脸两侧下方，竖直小圆角条）
-        $p.AddEllipse($ox + 1.2 * $k, $oy + 9.4 * $k, 2.2 * $k, 4.6 * $k)
-        $p.AddEllipse($ox + 12.6 * $k, $oy + 9.4 * $k, 2.2 * $k, 4.6 * $k)
-        $g.FillPath($br, $p)
-    } finally { $p.Dispose(); $br.Dispose() }
+    try { $g.FillPath($br, $script:ghIconPath) } finally { $br.Dispose() }
 })
 $lnkRepo.Add_Click({ if ($script:panelUpdateRepo) { try { Start-Process ('https://github.com/' + $script:panelUpdateRepo.Trim('/')) } catch { } } })
 $lnkRepo.Add_MouseEnter({ $lnkRepo.ForeColor = $clrHeaderAccent; $lnkRepo.Invalidate() })
@@ -587,8 +611,8 @@ $lnkIssues.Font = $fontSmall
 $lnkIssues.ForeColor = $clrOnDarkMuted
 $lnkIssues.AutoSize = $false
 $lnkIssues.TextAlign = 'MiddleLeft'
-# 中文「反馈」的字形墨迹中心比拉丁「GitHub」高约 1.6 px（实测），下移 2 px 让视觉重心对齐
-$lnkIssues.Location = New-Object System.Drawing.Point((S 356), ([int]$lnkY + (S 2)))
+# 中文「反馈」字形墨迹略高于拉丁「GitHub」：保留 Location.Y +1px 整数对齐，去掉 Padding 避免压缩可用高度
+$lnkIssues.Location = New-Object System.Drawing.Point((S 358), ([int]$lnkY + (S 1)))
 $lnkIssues.Size = New-Object System.Drawing.Size((S 40), $lnkH)
 $lnkIssues.Cursor = 'Hand'
 $lnkIssues.Add_Click({ if ($script:panelUpdateRepo) { try { Start-Process ('https://github.com/' + $script:panelUpdateRepo.Trim('/') + '/issues') } catch { } } })
@@ -606,7 +630,7 @@ $lblSub.Size = New-Object System.Drawing.Size((S 390), (S 20))
 $lblSub.Location = New-Object System.Drawing.Point((S 20), (S 44))
 $header.Controls.Add($lblSub)
 $lblSub.Cursor = 'Hand'
-$lblSub.Add_DoubleClick({ try { Start-Process explorer.exe $pkgRoot } catch { } })
+$lblSub.Add_DoubleClick({ try { Start-Process explorer.exe -ArgumentList ('"' + $pkgRoot + '"') } catch { } })
 $lblSub.Add_MouseEnter({ $lblSub.ForeColor = $clrHeaderAccent })
 $lblSub.Add_MouseLeave({ $lblSub.ForeColor = $clrOnDarkMuted })
 
@@ -2082,7 +2106,7 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
 
     $btnDir = New-DialogBtn $dlg ($w - $pad - (S 64)) $row2Y (S 64) (S 26) '更改…' 'secondary'
     $btnOpen = New-DialogBtn $dlg ($w - $pad - (S 64) - (S 6) - (S 54)) $row2Y (S 54) (S 26) '打开' 'secondary'
-    $btnOpen.Add_Click({ try { Start-Process explorer.exe (Resolve-BackupDir $script:pendingBackupDir) } catch { } })
+    $btnOpen.Add_Click({ try { Start-Process explorer.exe -ArgumentList ('"' + (Resolve-BackupDir $script:pendingBackupDir) + '"') } catch { } })
 
     $showDir = {
         $d = $script:pendingBackupDir
@@ -2713,7 +2737,7 @@ function Invoke-RestoreBackup([switch]$Auto) {
             $safe = Test-ArchiveSafe $pick.FullName $in $packer
             if ($safe.Ok) {
                 $pw = $in
-                if (-not (Get-BackupPw)) { try { Set-BackupPw $in; Write-Log '密码已存到本机，下次自动用' 'ok' } catch { } }
+                if (-not (Get-BackupPw)) { try { Set-BackupPw $in; Write-Log '密码已存到本机，下次自动用' 'ok' } catch { Write-Log ('密码保存失败（下次恢复需重输）：' + $_.Exception.Message) 'warn' } }
                 break
             }
             Write-Log ('密码不对（第 ' + ($k + 1) + ' 次）：' + $safe.Reason) 'warn'
@@ -3740,50 +3764,100 @@ function Test-PwaRegistrationGap {
 }
 
 function Start-PanelUpdateProbe {
-    # 启动后静默探测面板自身有没有新版：后台 runspace 发请求，UI 线程只轮询结果；
-    # 查到新版才变绿 + 弹一次窗（默认「否」，绝不自动替换 EXE）。
+    # 启动后静默探测面板自身有没有新版：30 分钟本地缓存免重复联网；后台 runspace 用可中断异步请求，
+    # 单源 2.5s、仅 2 源（去 ghfast.top）、总预算 <=8s；关窗时通过 $panelProbeCancel 立即 Abort。
     if ($script:panelProbeDone) { return }
     if ($script:closeRequested -or $form.IsDisposed) { return }
     if ([string]::IsNullOrWhiteSpace($script:panelUpdateRepo)) { return }
     if ($env:EP_NO_PANEL_PROBE -eq '1' -or $env:EP_NO_PROMPT -eq '1') { return }
     $script:panelProbeDone = $true
+    # 30 分钟内已探测过：直接复用缓存，0 网络请求（手动点「更新面板」始终实时直查）
+    $probeCachePath = Join-Path (Get-RuntimeCacheDir) 'panel-probe-cache.json'
+    try {
+        if (Test-Path -LiteralPath $probeCachePath) {
+            $pc = Get-Content -LiteralPath $probeCachePath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($pc -and $pc.time -and $pc.tag -and (((Get-Date) - [datetime]::Parse($pc.time)).TotalMinutes -lt 30)) {
+                $curV = $null; $newV = $null
+                $ct = ([string]$pc.tag).Trim().TrimStart('v', 'V')
+                if ([version]::TryParse($script:panelVersion, [ref]$curV) -and [version]::TryParse($ct, [ref]$newV) -and ($newV -gt $curV)) {
+                    Set-PanelUpdateHighlight $true
+                    Write-Log ('静默探测（缓存）：面板有新版本 v' + $script:panelVersion + ' → v' + $ct) 'warn'
+                }
+                return
+            }
+        }
+    } catch { }
     $repoSlug = $script:panelUpdateRepo.Trim('/')
     $page = 'https://github.com/' + $repoSlug + '/releases/latest'
     $api = 'https://api.github.com/repos/' + $repoSlug + '/releases/latest'
+    $cancelBox = [hashtable]::Synchronized(@{ Stop = $false })
+    $script:panelProbeCancel = $cancelBox
     $probe = @'
-param([string]$Page, [string]$Api)
+param([string]$Page, [string]$Api, $Cancel, [string]$CachePath)
 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
-# ① 优先走 releases/latest 的 302：零 API 配额，不会被限流
-foreach ($u in @($Page, ('https://gh-proxy.org/' + $Page), ('https://ghfast.top/' + $Page))) {
+$swAll = [Diagnostics.Stopwatch]::StartNew()
+function Save-ProbeCache([string]$tv) {
     try {
-        $req = [System.Net.HttpWebRequest]::Create($u)
-        $req.UserAgent = 'EdgePanel-Probe'
-        $req.AllowAutoRedirect = $false
-        $req.Timeout = 8000
-        $req.ReadWriteTimeout = 8000
-        $resp = $null
-        try { $resp = $req.GetResponse() } catch { $resp = $_.Exception.Response }
+        $tmp = $CachePath + '.tmp.' + $PID
+        [ordered]@{ tag = $tv; time = (Get-Date).ToString('s') } | ConvertTo-Json -Compress | Set-Content -LiteralPath $tmp -Encoding UTF8
+        [System.IO.File]::Copy($tmp, $CachePath, $true)
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    } catch { }
+}
+function Invoke-AbortableGet([string]$url, [bool]$noRedirect, [int]$msLimit) {
+    if ($Cancel['Stop'] -or $swAll.ElapsedMilliseconds -ge 8000) { return $null }
+    $req = [System.Net.HttpWebRequest]::Create($url)
+    $req.UserAgent = 'EdgePanel-Probe'
+    $req.AllowAutoRedirect = (-not $noRedirect)
+    $req.Timeout = $msLimit
+    $req.ReadWriteTimeout = $msLimit
+    $ar = $req.BeginGetResponse($null, $null)
+    $wh = $ar.AsyncWaitHandle
+    $swOne = [Diagnostics.Stopwatch]::StartNew()
+    while (-not $ar.IsCompleted) {
+        if ($Cancel['Stop'] -or $swOne.ElapsedMilliseconds -ge $msLimit -or $swAll.ElapsedMilliseconds -ge 8000) {
+            try { $req.Abort() } catch { }
+            try { [void]$wh.WaitOne(50) } catch { }
+            try { $wh.Close() } catch { }
+            return $null
+        }
+        [void]$wh.WaitOne(120)
+    }
+    try { return $req.EndGetResponse($ar) } catch { return $_.Exception.Response } finally { try { $wh.Close() } catch { } }
+}
+# ① 优先走 releases/latest 的 302（仅 2 源：直连 + gh-proxy.org，单源 2.5s，总预算 <=8s）
+foreach ($u in @($Page, ('https://gh-proxy.org/' + $Page))) {
+    if ($Cancel['Stop'] -or $swAll.ElapsedMilliseconds -ge 8000) { return 'ERR|' }
+    try {
+        $resp = Invoke-AbortableGet $u $true 2500
         if ($resp) {
             $loc = [string]$resp.Headers['Location']
             try { $resp.Close() } catch { }
             $m = [regex]::Match([string]$loc, '/tag/(v?[0-9][0-9A-Za-z\.\-_]*)$')
-            if ($m.Success) { return ('OK|' + $m.Groups[1].Value) }
+            if ($m.Success) {
+                $tv = $m.Groups[1].Value
+                Save-ProbeCache $tv
+                return ('OK|' + $tv)
+            }
         }
     } catch { }
 }
-# ② 重定向拿不到再退回 API（可能被匿名限流 60 次/小时）
-foreach ($u in @($Api, ('https://gh-proxy.org/' + $Api), ('https://ghfast.top/' + $Api))) {
+# ② 重定向拿不到再退回 API（仅 2 源，受 8s 总预算约束）
+foreach ($u in @($Api, ('https://gh-proxy.org/' + $Api))) {
+    if ($Cancel['Stop'] -or $swAll.ElapsedMilliseconds -ge 8000) { return 'ERR|' }
     try {
-        $req = [System.Net.HttpWebRequest]::Create($u)
-        $req.UserAgent = 'EdgePanel-Probe'
-        $req.Timeout = 8000
-        $req.ReadWriteTimeout = 8000
-        $resp = $req.GetResponse()
-        $sr = New-Object System.IO.StreamReader($resp.GetResponseStream(), [System.Text.Encoding]::UTF8)
-        $txt = $sr.ReadToEnd()
-        $sr.Dispose(); $resp.Close()
-        $o = $txt | ConvertFrom-Json
-        if ($o.tag_name) { return ('OK|' + [string]$o.tag_name) }
+        $resp = Invoke-AbortableGet $u $false 2500
+        if ($resp) {
+            $sr = New-Object System.IO.StreamReader($resp.GetResponseStream(), [System.Text.Encoding]::UTF8)
+            $txt = $sr.ReadToEnd()
+            $sr.Dispose(); $resp.Close()
+            $o = $txt | ConvertFrom-Json
+            if ($o.tag_name) {
+                $tv = [string]$o.tag_name
+                Save-ProbeCache $tv
+                return ('OK|' + $tv)
+            }
+        }
     } catch { }
 }
 return ('ERR|')
@@ -3793,7 +3867,7 @@ return ('ERR|')
         $rs.Open()
         $ps = [powershell]::Create()
         $ps.Runspace = $rs
-        [void]$ps.AddScript($probe).AddArgument($page).AddArgument($api)
+        [void]$ps.AddScript($probe).AddArgument($page).AddArgument($api).AddArgument($cancelBox).AddArgument($probeCachePath)
         $script:panelProbeRs = $rs
         $script:panelProbePs = $ps
         $script:panelProbeHandle = $ps.BeginInvoke()
