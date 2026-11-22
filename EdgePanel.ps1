@@ -550,22 +550,31 @@ $lnkRepo.Size = New-Object System.Drawing.Size((S 78), $lnkH)
 $lnkRepo.Cursor = 'Hand'
 $lnkRepo.Add_Paint({
     param($s, $e)
+    # 单色实心剪影：圆脸 + 两只尖耳 + 两侧垂下的手（14px 下仍能看出三段结构）
     $g = $e.Graphics
     $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-    $sz = [float](S 14)
-    $ox = 1.0; $oy = ([float]$s.Height - $sz) / 2.0
-    $k = $sz / 16.0
+    $k = ([float](S 14)) / 16.0
+    $ox = 1.0
+    $oy = ([float]$s.Height - 14.0 * $k) / 2.0 - $k
     $br = New-Object System.Drawing.SolidBrush($s.ForeColor)
-    $bg = New-Object System.Drawing.SolidBrush($clrHeader)
+    $p = New-Object System.Drawing.Drawing2D.GraphicsPath
     try {
-        # GitHub Octocat 16×16 简化矢量轮廓（单色跟随 ForeColor，悬停同步变强调蓝）
-        $g.FillEllipse($br, $ox, $oy, $sz, $sz)
-        $g.FillEllipse($bg, ($ox + 3.6 * $k), ($oy + 3.6 * $k), (8.8 * $k), (7.0 * $k))
-        $eL = [System.Drawing.PointF[]]@([System.Drawing.PointF]::new(($ox + 4.0 * $k), ($oy + 5.2 * $k)), [System.Drawing.PointF]::new(($ox + 4.4 * $k), ($oy + 2.3 * $k)), [System.Drawing.PointF]::new(($ox + 6.7 * $k), ($oy + 4.0 * $k)))
-        $eR = [System.Drawing.PointF[]]@([System.Drawing.PointF]::new(($ox + 12.0 * $k), ($oy + 5.2 * $k)), [System.Drawing.PointF]::new(($ox + 11.6 * $k), ($oy + 2.3 * $k)), [System.Drawing.PointF]::new(($ox + 9.3 * $k), ($oy + 4.0 * $k)))
-        $g.FillPolygon($bg, $eL); $g.FillPolygon($bg, $eR)
-        $g.FillRectangle($bg, ($ox + 5.8 * $k), ($oy + 10.2 * $k), (4.4 * $k), (6.0 * $k))
-    } finally { $br.Dispose(); $bg.Dispose() }
+        # 两只耳（朝上）
+        $p.AddPolygon([System.Drawing.PointF[]]@(
+            [System.Drawing.PointF]::new($ox + 2.8 * $k, $oy + 4.5 * $k),
+            [System.Drawing.PointF]::new($ox + 5.7 * $k, $oy + 1.1 * $k),
+            [System.Drawing.PointF]::new($ox + 6.9 * $k, $oy + 4.2 * $k)))
+        $p.AddPolygon([System.Drawing.PointF[]]@(
+            [System.Drawing.PointF]::new($ox + 13.2 * $k, $oy + 4.5 * $k),
+            [System.Drawing.PointF]::new($ox + 10.3 * $k, $oy + 1.1 * $k),
+            [System.Drawing.PointF]::new($ox + 9.1 * $k, $oy + 4.2 * $k)))
+        # 脸
+        $p.AddEllipse($ox + 2.5 * $k, $oy + 3.3 * $k, 11.0 * $k, 10.4 * $k)
+        # 两只手（垂在脸两侧下方，竖直小圆角条）
+        $p.AddEllipse($ox + 1.2 * $k, $oy + 9.4 * $k, 2.2 * $k, 4.6 * $k)
+        $p.AddEllipse($ox + 12.6 * $k, $oy + 9.4 * $k, 2.2 * $k, 4.6 * $k)
+        $g.FillPath($br, $p)
+    } finally { $p.Dispose(); $br.Dispose() }
 })
 $lnkRepo.Add_Click({ if ($script:panelUpdateRepo) { try { Start-Process ('https://github.com/' + $script:panelUpdateRepo.Trim('/')) } catch { } } })
 $lnkRepo.Add_MouseEnter({ $lnkRepo.ForeColor = $clrHeaderAccent; $lnkRepo.Invalidate() })
@@ -578,7 +587,8 @@ $lnkIssues.Font = $fontSmall
 $lnkIssues.ForeColor = $clrOnDarkMuted
 $lnkIssues.AutoSize = $false
 $lnkIssues.TextAlign = 'MiddleLeft'
-$lnkIssues.Location = New-Object System.Drawing.Point((S 356), $lnkY)
+# 中文「反馈」的字形墨迹中心比拉丁「GitHub」高约 1.6 px（实测），下移 2 px 让视觉重心对齐
+$lnkIssues.Location = New-Object System.Drawing.Point((S 356), ([int]$lnkY + (S 2)))
 $lnkIssues.Size = New-Object System.Drawing.Size((S 40), $lnkH)
 $lnkIssues.Cursor = 'Hand'
 $lnkIssues.Add_Click({ if ($script:panelUpdateRepo) { try { Start-Process ('https://github.com/' + $script:panelUpdateRepo.Trim('/') + '/issues') } catch { } } })
