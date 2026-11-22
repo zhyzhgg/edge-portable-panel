@@ -2138,9 +2138,8 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
 
     # 空间预检：打包时目标目录会同时存在 .tmp（≈数据体积），至少留 500 MB
     try {
-        $drvB = Get-PSDrive -Name ($targetDir.Substring(0, 1)) -ErrorAction Stop
-        $freeMB = [math]::Round($drvB.Free / 1MB)
-        if ($freeMB -lt 500) { Write-Log ('磁盘剩余空间不足（' + $freeMB + ' MB，至少要 500 MB），已中止备份') 'err'; return $false }
+        $freeMB = Get-DriveFreeMB $targetDir
+        if ($null -ne $freeMB -and $freeMB -lt 500) { Write-Log ('磁盘剩余空间不足（' + $freeMB + ' MB，至少要 500 MB），已中止备份') 'err'; return $false }
     } catch { }
 
     Write-Log '开始：清理缓存 + 备份用户数据…'
@@ -2757,24 +2756,11 @@ function Start-EdgeBat([string]$fileName, [string]$label) {
     }
 }
 function Get-PackageProcs {
-    # R3：先做廉价判定（本包无 Edge\msedge.exe 直接返回空）；遍历加 5 秒上限防止杀软/高负载下卡死 UI
+    # 适配层：廉价预判 + 5 秒上限 + 超时告警；枚举与判定只有 _Common 的 Get-EdgeProcs 一份实现
     if (-not (Test-Path -LiteralPath (Join-Path $edgeRoot 'msedge.exe'))) { return @() }
-    $prefix = $pkgRoot.TrimEnd('\') + '\'
-    $swP = [Diagnostics.Stopwatch]::StartNew()
-    $matched = New-Object System.Collections.ArrayList
-    foreach ($pr in @(Get-Process -Name msedge -ErrorAction SilentlyContinue)) {
-        if ($swP.Elapsed.TotalSeconds -gt 5.0) {
-            Write-Log '枚举 Edge 进程超时（>5 秒），已中止继续扫描以避免界面卡顿' 'warn'
-            break
-        }
-        try {
-            $pth = $pr.Path
-            if ($pth -and $pth.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
-                [void]$matched.Add($pr)
-            }
-        } catch { }
-    }
-    return @($matched)
+    $r = Get-EdgeProcs $pkgRoot 5
+    if ($r.TimedOut) { Write-Log '枚举 Edge 进程超时（>5 秒），已中止继续扫描以避免界面卡顿' 'warn' }
+    return @($r.Procs)
 }
 
 function Close-Edge {
@@ -2837,24 +2823,13 @@ $script:essentialFeature = @(
                             # 版本目录里那份是上游自带，缺了不影响使用（2026-11-21 实测：删掉后应用照常打开）
 )
 
-function Resolve-VersionDir([string]$edgeDir) {
-    # 与 _Common.ps1 的 Resolve-ProgramDir 同口径，但允许"目录在、msedge.dll 还没落"的中间态
-    if (-not (Test-Path -LiteralPath $edgeDir)) { return $null }
-    $vers = @(Get-ChildItem -LiteralPath $edgeDir -Directory -ErrorAction SilentlyContinue |
-              Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } |
-              Sort-Object { [version]$_.Name } -Descending)
-    foreach ($v in $vers) { if (Test-Path -LiteralPath (Join-Path $v.FullName 'msedge.dll')) { return $v.FullName } }
-    if ($vers.Count -gt 0) { return $vers[0].FullName }
-    return $null
-}
-
 function Sync-RootProxy([string]$edgeDir, [switch]$Force) {
     # 站点应用/PWA 快捷方式指向**包根**的 msedge_proxy.exe（Chromium 按运行中 exe 的目录拼出来的），
     # 而上游便携包根从不提供它 ⇒ 默认仅在根上缺失时补齐；传 -Force 时总是用版本目录的新版本刷新。
     # 返回是否真的写入了根文件（调用方不用管日志）。
     $rootProxy = Join-Path $edgeDir 'msedge_proxy.exe'
     if (-not $Force -and (Test-Path -LiteralPath $rootProxy)) { return $false }
-    $vd = Resolve-VersionDir $edgeDir
+    $vd = Resolve-VersionDir $edgeDir -AllowIncomplete
     if (-not $vd) { return $false }
     $src = Join-Path $vd 'msedge_proxy.exe'
     if (-not (Test-Path -LiteralPath $src)) { return $false }
@@ -2899,7 +2874,7 @@ function Test-EssentialSet([string]$edgeDir) {
     # 只读检查，返回缺项清单：Required=必需（缺了就起不来） / Feature=功能件（缺了某功能不可用）
     $req = New-Object System.Collections.Generic.List[string]
     $feat = New-Object System.Collections.Generic.List[string]
-    $verDir = Resolve-VersionDir $edgeDir
+    $verDir = Resolve-VersionDir $edgeDir -AllowIncomplete
     $verName = if ($verDir) { Split-Path $verDir -Leaf } else { '' }
     foreach ($t in $script:essentialRequired) {
         $rel = if ($verName) { $t -replace '\{ver\}', $verName } else { $t }
@@ -3353,7 +3328,7 @@ if (-not $script:updateBackupOk -and -not $dry -and -not $RunOnce) {
             $why = $_.Exception.Message
             Write-Log ('拷贝失败，正在回滚：' + $why) 'warn'
             foreach ($f in @('msedge.exe', 'msedge_proxy.exe', 'version.dll')) { Remove-Item -LiteralPath (Join-Path $edgeRoot $f) -Force -ErrorAction SilentlyContinue }
-            $nv = Resolve-VersionDir $edgeRoot
+            $nv = Resolve-VersionDir $edgeRoot -AllowIncomplete
             if ($nv) { Remove-Item -LiteralPath $nv -Recurse -Force -ErrorAction SilentlyContinue }
             foreach ($f in $staged) { Move-Item -LiteralPath (Join-Path $oldDir $f) -Destination (Join-Path $edgeRoot $f) -Force -ErrorAction SilentlyContinue }
             if (Test-Path -LiteralPath $oldDir) { Remove-Item -LiteralPath $oldDir -Recurse -Force -ErrorAction SilentlyContinue }
