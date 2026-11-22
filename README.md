@@ -43,8 +43,8 @@ Get-FileHash .\EdgePanel.exe -Algorithm SHA256
 
 ## 更新机制与版本号约定
 
-- **单源版本对齐**：公开仓库的 Release Tag、源码 `EdgePanel.ps1` 的 `$script:panelVersion` 与 `build\Host.cs` 的 `ProductVersion` 严格保持一致（例如 `v1.3.3` ↔ `'1.3.3'` ↔ `"v1.3.3"`），`build.ps1` 编译前自动强校验。
-- **同版本号热修说明**：自更新仅比对语义化版本号（`v1.3.3` → `v1.3.4`）。若某次小修以“附件热修”方式直接替换当前 Release 的 `EdgePanel.exe`（未升版本号），已安装同版本号的用户不会收到自动弹窗，需手动重新下载覆盖；正式升级版本号（如发布 `v1.3.4`）后旧版面板会自动探测提示。
+- **单源版本对齐**：公开仓库的 Release Tag、源码 `EdgePanel.ps1` 的 `$script:panelVersion` 与 `build\Host.cs` 的 `ProductVersion` 严格保持一致（例如 `v1.3.4` ↔ `'1.3.4'` ↔ `"v1.3.4"`），`build.ps1` 编译前自动强校验。
+- **同版本号热修说明**：自更新仅比对语义化版本号（`v1.3.4` → `v1.3.5`）。若某次小修以“附件热修”方式直接替换当前 Release 的 `EdgePanel.exe`（未升版本号），已安装同版本号的用户不会收到自动弹窗，需手动重新下载覆盖；正式升级版本号（如发布 `v1.3.5`）后旧版面板会自动探测提示。
 - **零配额探测**：版本检查优先走 `releases/latest` 的 302 跳转提取 `Location` 中的 Tag，不消耗 GitHub 匿名 API 配额（60 次/小时），仅在重定向失败时回退至 Release API 与国内镜像代理。
 
 ## 已知限制
@@ -85,7 +85,7 @@ Get-FileHash '<发布暂存目录>\EdgePanel.exe' -Algorithm SHA256
 ```
 
 3. 先提交并推送源码到 `main`（若遇 `schannel` TLS 握手失败，可加 `git -c http.sslBackend=openssl push origin main`）。
-4. 创建与 `$script:panelVersion` 一致的 Git Tag（如 `v1.3.4`）并发布 Release，附件固定命名为 **`EdgePanel.exe`** 与 **`SHA256SUMS.txt`**（格式：`<64位十六进制哈希>  EdgePanel.exe`）。
+4. 创建与 `$script:panelVersion` 一致的 Git Tag（如 `v1.3.5`）并发布 Release，附件固定命名为 **`EdgePanel.exe`** 与 **`SHA256SUMS.txt`**（格式：`<64位十六进制哈希>  EdgePanel.exe`）。
 
 ## 许可
 

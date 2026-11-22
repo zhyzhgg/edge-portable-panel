@@ -12,8 +12,8 @@ using System.Text.RegularExpressions;
 internal static class Host
 {
     // 资源版本号：内容变了就改这里，触发重新解包
-    private const string ResourceVersion = "2026-11-21.195";   // 解包目录键（每次改内容 -Bump）
-    private const string ProductVersion = "v1.3.3";   // 必须与 EdgePanel.ps1 的 $script:panelVersion 一致（build.ps1 自动校验）
+    private const string ResourceVersion = "2026-11-21.196";   // 解包目录键（每次改内容 -Bump）
+    private const string ProductVersion = "v1.3.4";   // 必须与 EdgePanel.ps1 的 $script:panelVersion 一致（build.ps1 自动校验）
     private const string FallbackFolderName = "EdgePanel";
 
     // 本次运行实际使用的运行时根目录（logs/cache 都挂在它下面）
