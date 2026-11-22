@@ -1869,24 +1869,33 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
 
     # ── 第 1 行：加密 ──
     $rowY = $pad + $hTop + (S 14)
+    # 同第 3 行：glyph 只画方块，文字走独立 Label，三者（方块/文字/状态）同高 26 同 Y
     $chk = New-Object System.Windows.Forms.CheckBox
-    $chk.Text = '加密备份'
-    $chk.AutoSize = $true
-    $chk.CheckAlign = 'MiddleLeft'
-    $chk.TextAlign = 'MiddleLeft'
+    $chk.Text = ''
+    $chk.AutoSize = $false
+    $chk.CheckAlign = 'MiddleCenter'
+    $chk.Size = New-Object System.Drawing.Size((S 20), (S 26))
     $chk.Checked = ($cfg.last -eq 'encrypted')
     $chk.ForeColor = $clrText
-    $chkH = $chk.PreferredSize.Height
-    $chkY = $rowY + [int][math]::Floor([math]::Max(0, (((S 26) - $chkH) / 2)))
-    $chk.Location = New-Object System.Drawing.Point(($pad + (S 2)), $chkY)
+    $chk.Location = New-Object System.Drawing.Point(($pad + (S 2)), $rowY)
     $dlg.Controls.Add($chk)
+
+    $chkLbl = New-Object System.Windows.Forms.Label
+    $chkLbl.AutoSize = $false
+    $chkLbl.Size = New-Object System.Drawing.Size((S 76), (S 26))
+    $chkLbl.TextAlign = 'MiddleLeft'
+    $chkLbl.ForeColor = $clrText
+    $chkLbl.Text = '加密备份'
+    $chkLbl.Location = New-Object System.Drawing.Point(($pad + (S 22)), $rowY)
+    $chkLbl.Add_Click({ $chk.Checked = -not $chk.Checked })
+    $dlg.Controls.Add($chkLbl)
 
     $pwStatus = New-Object System.Windows.Forms.Label
     $pwStatus.AutoSize = $false
     $pwStatus.TextAlign = 'MiddleLeft'
-    $pwStatus.Size = New-Object System.Drawing.Size((S 140), ([int]$chkH))
+    $pwStatus.Size = New-Object System.Drawing.Size((S 130), (S 26))
     $pwStatus.ForeColor = $clrMuted
-    $pwStatus.Location = New-Object System.Drawing.Point(($chk.Right + (S 6)), ([int]$chkY))
+    $pwStatus.Location = New-Object System.Drawing.Point(($chkLbl.Right + (S 8)), $rowY)
     $dlg.Controls.Add($pwStatus)
 
     $btnPw = New-DialogBtn $dlg ($w - $pad - (S 104)) $rowY (S 104) (S 26) '修改密码…' 'secondary'
@@ -1999,19 +2008,29 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
 
     # ── 第 3 行：带本体（一次性，永远默认不勾、不记忆）──
     $fullY = $row2Y + (S 30) + (S 10)
+    # 勾选框只画方块、文字交给同高的独立 Label —— 两者都在 26px 行内垂直居中，彻底消除基线偏差
     $chkFull = New-Object System.Windows.Forms.CheckBox
-    $chkFull.Text = '同时打包浏览器本体（约 +218 MB，用于换机/重装）'
+    $chkFull.Text = ''
     $chkFull.AutoSize = $false
-    $chkFull.CheckAlign = 'MiddleLeft'
-    $chkFull.TextAlign = 'MiddleLeft'
-    $chkFull.Size = New-Object System.Drawing.Size(($inner - (S 4)), (S 24))
+    $chkFull.CheckAlign = 'MiddleCenter'
+    $chkFull.Size = New-Object System.Drawing.Size((S 20), (S 26))
     $chkFull.Checked = $false
     $chkFull.ForeColor = $clrText
     $chkFull.Location = New-Object System.Drawing.Point(($pad + (S 2)), $fullY)
     $dlg.Controls.Add($chkFull)
 
+    $chkLblFull = New-Object System.Windows.Forms.Label
+    $chkLblFull.AutoSize = $false
+    $chkLblFull.Size = New-Object System.Drawing.Size(($inner - (S 26)), (S 26))
+    $chkLblFull.TextAlign = 'MiddleLeft'
+    $chkLblFull.ForeColor = $clrText
+    $chkLblFull.Text = '同时打包浏览器本体（约 +218 MB，用于换机/重装）'
+    $chkLblFull.Location = New-Object System.Drawing.Point(($pad + (S 22)), $fullY)
+    $chkLblFull.Add_Click({ $chkFull.Checked = -not $chkFull.Checked })
+    $dlg.Controls.Add($chkLblFull)
+
     $fullNoteText = '勾选后连 Edge 程序一起打包，得到可换机的完整包；与数据包共用上方「保留最近 N 份」额度，按时间倒序轮转。'
-    $fullNoteY = $fullY + (S 24)
+    $fullNoteY = $fullY + (S 26)
     $hFullNote = Get-TextHeight $fullNoteText $fontSmall $inner
     $fullNote = New-Object System.Windows.Forms.Label
     $fullNote.AutoSize = $false
