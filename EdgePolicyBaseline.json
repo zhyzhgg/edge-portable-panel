@@ -36,12 +36,6 @@
   },
   {
     "type": "DWORD",
-    "name": "AllowBrowsingWithCopilot",
-    "value": 0,
-    "maxMajor": 158
-  },
-  {
-    "type": "DWORD",
     "name": "AlternateErrorPagesEnabled",
     "value": 0
   },
@@ -661,5 +655,10 @@
     "type": "DWORD",
     "name": "NewTabPageAllowedBackgroundTypes",
     "value": 3
+  },
+  {
+    "type": "DWORD",
+    "name": "AllowBrowsingWithCopilot",
+    "remove": true
   }
 ]

@@ -164,6 +164,50 @@ function Set-ComponentUpdate([string]$ini, [bool]$disable) {
     return $true
 }
 
+function Set-IniFeature([string]$ini, [string]$feature, [bool]$enable) {
+    <#  在 command_line 的 --enable-features= 列表里加/去一个特性。
+        必须合并进同一个 --enable-features（写第二个会把前一个覆盖掉）；
+        没有这一项就追加，列表空了就把整项去掉。 #>
+    $s = Read-IniState $ini
+    if ($s.Index -lt 0) { Say '[错误] ini 里没有 command_line 行，未改动。' 'Red'; return $false }
+
+    $val = $s.Value
+    $m = [regex]::Match($val, '--enable-features=([^\s]*)')
+    $cur = @()
+    if ($m.Success -and $m.Groups[1].Value.Trim() -ne '') {
+        $cur = @($m.Groups[1].Value -split ',' | Where-Object { $_ -ne '' })
+    }
+    $has = @($cur | Where-Object { $_ -eq $feature }).Count -gt 0
+    if ($enable -eq $has) {
+        Say ('特性 ' + $feature + ' 已是' + $(if ($enable) { '开启' } else { '关闭' }) + '状态，无需修改。') 'Green'
+        return $true
+    }
+
+    $list = if ($enable) { @(($cur + $feature) | Select-Object -Unique) } else { @($cur | Where-Object { $_ -ne $feature }) }
+    $joined = ($list -join ',')
+    $newVal = if ($m.Success) {
+        if ($joined) { $val.Replace($m.Value, '--enable-features=' + $joined) }
+        else { ($val.Replace($m.Value, '') -replace '\s{2,}', ' ').Trim() }
+    } else {
+        if ($joined) { ($val + ' --enable-features=' + $joined).Trim() } else { $val }
+    }
+
+    if (-not (Test-Path -LiteralPath $backupDir)) { New-Item -ItemType Directory -Path $backupDir -Force | Out-Null }
+    $bak = Join-Path $backupDir ('ini.' + (Get-Date).ToString('yyyyMMdd-HHmmss') + '.bak')
+    Copy-Item -LiteralPath $ini -Destination $bak -Force
+    [void](Remove-OldBackups $backupDir 10)
+
+    $s.Lines[$s.Index] = 'command_line=' + $newVal + $s.Trail
+    $out = ($s.Lines -join $s.Nl)
+    if (-not $out.EndsWith($s.Nl)) { $out += $s.Nl }
+    [System.IO.File]::WriteAllText($ini, $out, $s.Enc)
+
+    Say ('已' + $(if ($enable) { '开启' } else { '关闭' }) + '特性：' + $feature) 'Green'
+    Say ('  command_line = ' + $newVal)
+    Say ('  备份: ' + $bak) 'DarkGray'
+    return $true
+}
+
 # ---------- 瘦身 ----------
 function Get-SlimTargets([string]$prog) {
     $list = @()
@@ -326,7 +370,12 @@ function Do-SlimAll([string]$pkgRoot, [string]$programDir, [string]$iniPath) {
     $n = Test-EdgeRunningIn $pkgRoot
     if ($n -gt 0) { Say ('[中止] 本包有 ' + $n + ' 个进程在跑，先完全退出 Edge。') 'Red'; return $false }
     Invoke-Slim $programDir $pkgRoot
-    if ($iniPath) { [void](Set-ComponentUpdate $iniPath $true) } else { Say '找不到 ini，跳过组件更新开关。' 'Yellow' }
+    if ($iniPath) {
+        [void](Set-ComponentUpdate $iniPath $true)
+        # 多线程下载：Chromium 的 ParallelDownloading 只能走 --enable-features（没有对应注册表策略，
+        # 且 SmartScreen 那类"下载检查"策略在个人电脑上无效），这里顺手并入同一个 --enable-features 列表。
+        [void](Set-IniFeature $iniPath 'ParallelDownloading' $true)
+    } else { Say '找不到 ini，跳过组件更新开关。' 'Yellow' }
     return $true
 }
 

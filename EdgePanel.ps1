@@ -8,7 +8,7 @@
 #>
 
 $ErrorActionPreference = 'Stop'
-$script:panelVersion = '1.3.5'
+$script:panelVersion = '1.3.6'
 $script:panelUpdateRepo = 'zhyzhgg/edge-portable-panel'   # 自更新源（公开仓库 Releases）
 $script:panelProbePs = $null
 $script:panelProbeRs = $null
@@ -1393,14 +1393,10 @@ function Apply-RecommendedPolicies {
     } catch {
         Write-Log ('策略基线解析失败：' + $_.Exception.Message) 'err'; return
     }
-    # 按当前 Edge 主版本过滤：maxMajor 超期的跳过；remove 条目只用于"顺手清掉旧值"
-    $curMajor = Get-EdgeMajorVersion $pkgRoot
-    $activeRecs = @($baseline | Where-Object {
-        -not $_.remove -and (-not $_.maxMajor -or $curMajor -eq 0 -or $curMajor -le [int]$_.maxMajor)
-    })
-    $dropRecs = @($baseline | Where-Object {
-        $_.remove -or ($_.maxMajor -and $curMajor -gt 0 -and $curMajor -gt [int]$_.maxMajor)
-    })
+    # 该写哪些条目：唯一实现见 _Common 的 Get-ActiveBaselineRecords
+    $activeRecs = Get-ActiveBaselineRecords $baseline
+    # 需要顺手清掉旧值的（基线里标了 remove 的条目）
+    $dropRecs = @($baseline | Where-Object { $_ -and $_.remove })
     $mainCount = @($activeRecs | Where-Object { -not $_.sub }).Count
     $subCount  = @($activeRecs | Where-Object { $_.sub }).Count
 
@@ -1524,16 +1520,11 @@ function Test-StructureDrift([string]$edgeDir, [string]$scope = '') {
 # ---------------- F3：策略漂移体检（注册表 vs 内嵌基线） ----------------
 function Get-PolicyDrift {
     # 基线（JSON 数组：[{type,name,value} | {type,sub,name,value}]）→ 扁平字典
-    # 过滤口径必须与 Apply-RecommendedPolicies 的 $activeRecs/$dropRecs 一致：
-    #   ① remove 条目（将来若启用）本就不该写、也不该期望它存在；
-    #   ② maxMajor 已超期的条目（如 AllowBrowsingWithCopilot 对 Edge 159+）既不再写入，
-    #      也不该报"缺失"——否则 Edge 升级后每次开面板都红字误报，且点「应用推荐策略」
-    #      删掉它之后又立刻报缺失，陷入死循环。
-    $curMajor = Get-EdgeMajorVersion $pkgRoot
+    # 与 Apply-RecommendedPolicies 共用同一份「该写哪些条目」的判定（Get-ActiveBaselineRecords），
+    # 避免两处口径漂移 —— v1.3.5 就是这里只对齐了一半，才让 Edge 159 后出现红字误报死循环。
     $flatBase = @{}
-    foreach ($e in $script:baseline) {
+    foreach ($e in (Get-ActiveBaselineRecords $script:baseline)) {
         if (-not $e) { continue }
-        if ($e.remove -or ($e.maxMajor -and $curMajor -gt 0 -and $curMajor -gt [int]$e.maxMajor)) { continue }
         $k = if ($e.sub) { [string]$e.sub + '\' + [string]$e.name } else { [string]$e.name }
         $flatBase[$k] = $e.value
     }
@@ -1595,14 +1586,8 @@ function Get-ExtraPolicyDrift {
     $base = @{}
     foreach ($e in $script:baseline) { if ($e -and -not $e.sub) { $base[[string]$e.name] = $e.value } }
     $bad = @()
-    $curMajor = Get-EdgeMajorVersion $pkgRoot
     foreach ($n in $script:extraOnlyPolicies) {
         if (-not $base.ContainsKey($n)) { continue }
-        # 条目自带 maxMajor 且当前 Edge 已超过 → 不再当作"被误删"
-        if ($curMajor -gt 0) {
-            $meta = @($script:baseline | Where-Object { -not $_.sub -and [string]$_.name -eq $n -and $_.maxMajor } | Select-Object -First 1)
-            if ($meta -and $curMajor -gt [int]$meta.maxMajor) { continue }
-        }
         $cur = $null
         $has = $false
         try { $cur = (Get-ItemProperty -Path $script:policyKey -Name $n -ErrorAction Stop).$n; $has = $true } catch { }

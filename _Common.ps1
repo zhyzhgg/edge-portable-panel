@@ -79,13 +79,13 @@ function Test-EdgeRunningIn([string]$pkgRoot) {
     return @((Get-EdgeProcs $pkgRoot).Procs).Count
 }
 
-function Get-EdgeMajorVersion([string]$pkgRoot) {
-    <#  当前便携包的 Edge 主版本号（如 158）；取不到时返回 0，调用方需按"未知"处理。 #>
-    try {
-        $v = Resolve-VersionDir (Join-Path $pkgRoot 'Edge') 'msedge.exe'
-        if ($v) { return [int](((Split-Path $v -Leaf) -split '\.')[0]) }
-    } catch { }
-    return 0
+function Get-ActiveBaselineRecords($baseline) {
+    <#  基线里「当前应当写入注册表」的条目 —— 唯一实现。
+        Apply-RecommendedPolicies 与 Get-PolicyDrift 必须都调它：v1.3.5 之前两处各写了一遍过滤条件，
+        热修时只对齐了一半，才引出"Edge 159 后红字报缺失 → 点应用删掉 → 再报缺失"的死循环。
+        v1.3.6 起 maxMajor 版本上限机制已随 AllowBrowsingWithCopilot 一起移除；将来若要恢复按版本过滤，
+        只需改本函数，调用方无需再动。 #>
+    return @($baseline | Where-Object { $_ -and -not $_.remove })
 }
 
 function Get-ZhWorkDir([string]$fallbackBase) {
