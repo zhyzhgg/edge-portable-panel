@@ -512,6 +512,8 @@ $form.Add_FormClosing({
     # 打包中的 7zr 是独立进程，Kill 防孤儿继续写 .tmp
     if ($script:backupProc -and -not $script:backupProc.HasExited) { try { $script:backupProc.Kill() } catch { } }
     if ($script:policyWatch) { try { $script:policyWatch.Stop(); $script:policyWatch.Dispose() } catch { } }
+    if ($script:logTimer) { try { $script:logTimer.Stop(); $script:logTimer.Dispose() } catch { }; $script:logTimer = $null }
+    try { Drain-LogQueue } catch { }
     if ($script:startupPromptTimer) { try { $script:startupPromptTimer.Stop(); $script:startupPromptTimer.Dispose() } catch { }; $script:startupPromptTimer = $null }
     foreach ($tm in @($script:panelProbeDelay, $script:panelProbeTimer)) { if ($tm) { try { $tm.Stop(); $tm.Dispose() } catch { } } }
     $script:panelProbeDelay = $null; $script:panelProbeTimer = $null
@@ -908,28 +910,75 @@ if ($maxH -lt $wantH) {
 }
 
 # ---------------- 日志 / 忙碌态 ----------------
-function Write-Log([string]$text, [string]$level = 'info') {
+# ---- 日志管线：磁盘全量；界面走队列 + 60 ms 批量落屏，并支持分块，避免并行任务的行互相插队 ----
+$script:logQueue = $null      # ConcurrentQueue，写入端可能是后台线程
+$script:logTimer = $null
+$script:logBlock = $null      # 非空时 Write-Log 先攒到块里，End-LogBlock 再整块入队
+
+function Append-LogRow($row) {
+    if (-not $log -or $log.IsDisposed) { return }
+    $log.SelectionStart = $log.TextLength
+    $log.SelectionLength = 0
+    $log.SelectionColor = $clrMuted
+    $log.AppendText($row.Time + ' │ ')
+    $log.SelectionColor = $row.Clr
+    $log.AppendText($row.Tag)
+    $log.SelectionColor = $clrMuted
+    $log.AppendText(' │ ')
+    $log.SelectionColor = $clrLogText
+    $log.AppendText($row.Text + "`r`n")
+}
+
+function Drain-LogQueue {
+    if (-not $script:logQueue -or $script:logQueue.IsEmpty) { return }
+    $n = 0
+    while ($n -lt 300) {
+        $row = $null
+        if (-not $script:logQueue.TryDequeue([ref]$row)) { break }
+        Append-LogRow $row
+        $n++
+    }
+    if ($n -gt 0 -and $log -and -not $log.IsDisposed) {
+        $log.SelectionStart = $log.TextLength
+        $log.SelectionLength = 0
+        $log.ScrollToCaret()
+    }
+}
+
+function Initialize-LogPump {
+    if ($script:logTimer) { return }
+    $script:logQueue = New-Object System.Collections.Concurrent.ConcurrentQueue[object]
+    $script:logTimer = New-Object System.Windows.Forms.Timer
+    $script:logTimer.Interval = 60
+    $script:logTimer.Add_Tick({ Drain-LogQueue })
+    $script:logTimer.Start()
+}
+
+function Start-LogBlock { if ($script:logBlock) { return }; $script:logBlock = New-Object System.Collections.ArrayList }
+function End-LogBlock {
+    if (-not $script:logBlock) { return }
+    $rows = $script:logBlock
+    $script:logBlock = $null
+    foreach ($r in $rows) {
+        if ($script:logQueue) { $script:logQueue.Enqueue($r) } else { Append-LogRow $r }
+    }
+}
+
+# 队列在这里初始化：$log 已创建（883 行），且之后的日志都走队列
+Initialize-LogPump
+
+function Write-Log([string]$text, [string]$level = 'info', [switch]$Det) {
     $t = (Get-Date).ToString('HH:mm:ss')
     # 级别必须是「2 个全角汉字」宽：实测雅黑 8.5pt 下「完成/警告/失败/信息」都是 39 px
     $tag = switch ($level) { 'ok' { '完成' } 'warn' { '警告' } 'err' { '失败' } default { '信息' } }
     # 仅给 2 字级别列着色（全部复用现有色板）：warn 按用户要求用红色 $clrBad（如需琥珀橙可改为 $clrWarn）
     $tagClr = switch ($level) { 'ok' { $clrGo } 'warn' { $clrBad } 'err' { $clrBad } default { $clrMuted } }
-    $line = "$t │ $tag │ $text"
-    Write-Host $line
-    if ($log -and -not $log.IsDisposed) {
-        $log.SelectionStart = $log.TextLength
-        $log.SelectionLength = 0
-        $log.SelectionColor = $clrMuted
-        $log.AppendText("$t │ ")
-        $log.SelectionColor = $tagClr
-        $log.AppendText($tag)
-        $log.SelectionColor = $clrMuted
-        $log.AppendText(' │ ')
-        $log.SelectionColor = $clrLogText
-        $log.AppendText($text + "`r`n")
-        $log.SelectionStart = $log.TextLength
-        $log.ScrollToCaret()
-    }
+    Write-Host ("$t │ $tag │ $text")     # 磁盘日志：全量保留
+    if ($Det) { return }                 # 明细只进日志文件，不上界面
+    $row = [pscustomobject]@{ Time = $t; Tag = $tag; Clr = $tagClr; Text = $text }
+    if ($script:logBlock) { [void]$script:logBlock.Add($row); return }
+    if ($script:logQueue) { $script:logQueue.Enqueue($row); return }
+    Append-LogRow $row
 }
 
 function Set-Busy([bool]$busy, [string]$msg = '') {
@@ -1324,7 +1373,10 @@ $script:refreshTimer.Add_Tick({
         $script:refreshHandle = $null
         Set-RefreshBusy $false
     }
-    if ($text) { Apply-Status $text; Write-Log '状态已刷新' 'ok' }
+    if ($text) {
+        Start-LogBlock
+        try { Apply-Status $text; Write-Log '状态已刷新' 'ok' } finally { End-LogBlock }
+    }
     if ($script:pendingAutoCheck) {
         $script:pendingAutoCheck = $false
         Invoke-Check $true   # 静默检查：不打断用户操作，也不闪按钮
@@ -2434,10 +2486,25 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
         # 3) 常规清理
         Write-Log '步骤 1/3：常规清理缓存…'
         $rc = Invoke-Ps $cleaner @('-Apply', '-Quiet', '-Root', $pkgRoot)
+        # 界面只留重点：前后体积/释放量/Top 构成/扩展与站点下钻/逐项结果；计划清单等明细只进日志文件
+        Start-LogBlock
+        $inSection = $false     # 处在"构成/Top"表里：表头下面那些「数字 MB 名字」行要留在界面上
         foreach ($line in $rc.Output) {
             $s = [string]$line
-            if (-not [string]::IsNullOrWhiteSpace($s)) { Write-Log ($s -replace '^\s+', '') }
+            if ([string]::IsNullOrWhiteSpace($s)) { $inSection = $false; continue }
+            $s = $s -replace '^\s+', ''
+            if ($s -match '^(当前剩余构成|清理后剩余构成|扩展占用 Top|站点数据 Top)') {
+                Write-Log $s; $inSection = $true; continue
+            }
+            if ($inSection -and $s -match '^\d') { Write-Log $s; continue }
+            if ($s -match '^(清理前|清理后|实际释放|预计可释放|差额核对|（想减少占用|（附带说明|\[OK\]|\[跳过\]|失败项|重启 Edge)') {
+                $inSection = $false
+                Write-Log $s
+            } else {
+                Write-Log $s 'info' -Det
+            }
         }
+        End-LogBlock
         if ($rc.Code -ne 0) { Write-Log ('清理返回码 ' + $rc.Code + '，继续备份') 'warn' }
 
 
