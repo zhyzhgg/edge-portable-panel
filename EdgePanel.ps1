@@ -2089,7 +2089,7 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
 
     $chkLbl = New-Object System.Windows.Forms.Label
     $chkLbl.AutoSize = $false
-    $chkLbl.Size = New-Object System.Drawing.Size((S 76), (S 26))
+    $chkLbl.Size = New-Object System.Drawing.Size(([int][math]::Max((S 76), ([System.Windows.Forms.TextRenderer]::MeasureText('加密备份', $fontBase).Width + (S 10)))), (S 26))
     $chkLbl.TextAlign = 'MiddleLeft'
     $chkLbl.ForeColor = $clrText
     $chkLbl.Text = '加密备份'
@@ -2218,7 +2218,7 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $lbFmt = New-Object System.Windows.Forms.Label
     $lbFmt.Text = '压缩格式'
     $lbFmt.AutoSize = $false
-    $lbFmt.Size = New-Object System.Drawing.Size((S 64), (S 24))
+    $lbFmt.Size = New-Object System.Drawing.Size(([int][math]::Max((S 64), ([System.Windows.Forms.TextRenderer]::MeasureText('压缩格式', $fontBase).Width + (S 10)))), (S 24))
     $lbFmt.TextAlign = 'MiddleLeft'
     $lbFmt.ForeColor = $clrText
     $lbFmt.Location = New-Object System.Drawing.Point($pad, $fmtY)
@@ -2228,14 +2228,15 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $rb7z.Text = '7z（高压缩）'
     $rb7z.AutoSize = $true
     $rb7z.ForeColor = $clrText
-    $rb7z.Location = New-Object System.Drawing.Point(($pad + (S 68)), ($fmtY + (S 2)))
+    $rb7z.Location = New-Object System.Drawing.Point(($lbFmt.Right + (S 6)), ($fmtY + (S 2)))
     $dlg.Controls.Add($rb7z)
 
     $rbZip = New-Object System.Windows.Forms.RadioButton
     $rbZip.Text = 'zip（Win10 直接解压）'
     $rbZip.AutoSize = $true
     $rbZip.ForeColor = $clrText
-    $rbZip.Location = New-Object System.Drawing.Point(($pad + (S 188)), ($fmtY + (S 2)))
+    $wRb7z = [System.Windows.Forms.TextRenderer]::MeasureText($rb7z.Text, $fontBase).Width + (S 28)
+    $rbZip.Location = New-Object System.Drawing.Point(($lbFmt.Right + (S 6) + $wRb7z), ($fmtY + (S 2)))
     $rbZip.Enabled = [bool]$script:packerSupportsZip
     if (-not $script:packerSupportsZip) { $script:tip.SetToolTip($rbZip, '需在编译时放入 tools\7za.exe 才支持 zip 格式') }
     $dlg.Controls.Add($rbZip)
