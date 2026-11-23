@@ -637,18 +637,35 @@ $lnkIssues.Add_MouseEnter({ $lnkIssues.ForeColor = $clrHeaderAccent })
 $lnkIssues.Add_MouseLeave({ $lnkIssues.ForeColor = $clrOnDarkMuted })
 $header.Controls.Add($lnkIssues)
 
+function Measure-TextWidthDpi([string]$text, [System.Drawing.Font]$font) {
+    # 按当前系统真实 DPI 修正点制字号宽度：避免 125%/150% DPI 下「点制文字 + 1x 坐标」折行叠字
+    if ([string]::IsNullOrEmpty($text)) { return 0 }
+    $w1 = [System.Windows.Forms.TextRenderer]::MeasureText($text, $font).Width
+    try {
+        $gDpi = $form.CreateGraphics()
+        try { $ratio = $gDpi.DpiX / 96.0 } finally { $gDpi.Dispose() }
+        if ($ratio -gt 1.01) {
+            $fScaled = New-Object System.Drawing.Font($font.FontFamily, [single]($font.SizeInPoints * $ratio), $font.Style)
+            try {
+                $w2 = [System.Windows.Forms.TextRenderer]::MeasureText($text, $fScaled).Width
+                if ($w2 -gt $w1) { $w1 = $w2 }
+            } finally { $fScaled.Dispose() }
+        }
+    } catch { }
+    return [int]$w1
+}
 function Format-MiddleEllipsisPath([string]$path, [System.Drawing.Font]$font, [int]$maxW) {
-    # 路径中段省略（保留盘符 + 首段 + 末段，如 D:\App\…\Edge_Portable），实测文字宽度确保不越界
+    # 路径中段省略（保留盘符 + 首段 + 末段，如 D:\App\…\Edge_Portable），实测真实 DPI 宽度确保不越界
     if ([string]::IsNullOrWhiteSpace($path)) { return '' }
-    if ([System.Windows.Forms.TextRenderer]::MeasureText($path, $font).Width -le $maxW) { return $path }
+    if ((Measure-TextWidthDpi $path $font) -le $maxW) { return $path }
     $parts = @($path.TrimEnd('\') -split '\\')
     if ($parts.Count -ge 4) {
         $cand = $parts[0] + '\' + $parts[1] + '\…\' + $parts[-1]
-        if ([System.Windows.Forms.TextRenderer]::MeasureText($cand, $font).Width -le $maxW) { return $cand }
+        if ((Measure-TextWidthDpi $cand $font) -le $maxW) { return $cand }
     }
     if ($parts.Count -ge 3) {
         $cand2 = $parts[0] + '\…\' + $parts[-1]
-        if ([System.Windows.Forms.TextRenderer]::MeasureText($cand2, $font).Width -le $maxW) { return $cand2 }
+        if ((Measure-TextWidthDpi $cand2 $font) -le $maxW) { return $cand2 }
     }
     return $path
 }
@@ -658,9 +675,8 @@ function Enable-DoubleBuffer($c) {
         if ($pi) { $pi.SetValue($c, $true, $null) }
     } catch { }
 }
-# 目录末尾的下拉箭头（点它切换便携包目录）：路径可用宽 = 390 - 箭头宽 - 间距
-$swChevTxt = '▾'
-$swChevW = [Math]::Max((S 18), ([System.Windows.Forms.TextRenderer]::MeasureText($swChevTxt, $fontSmall).Width + (S 10)))
+# 目录末尾的矢量折线箭头（18x18 无边框热区，GraphicsPath 自绘 6x4 圆头 V 形，垂直对齐路径文字墨迹中心）
+$swChevW = S 18
 $subMaxW = (S 390) - $swChevW - (S 6)
 $lblSub = New-Object System.Windows.Forms.Label
 $lblSub.Font = $fontSub
@@ -669,8 +685,8 @@ $lblSub.AutoSize = $false
 $lblSub.TextAlign = 'MiddleLeft'
 $lblSub.Size = New-Object System.Drawing.Size($subMaxW, (S 22))
 $lblSub.Location = New-Object System.Drawing.Point((S 20), (S 43))
-    $lblSub.Text = Format-MiddleEllipsisPath $pkgRoot $fontSub ($subMaxW - (S 2))
-    $lblSub.Size = New-Object System.Drawing.Size([int][Math]::Min((([System.Windows.Forms.TextRenderer]::MeasureText($lblSub.Text, $fontSub).Width) + (S 4)), $subMaxW), (S 22))
+$lblSub.Text = Format-MiddleEllipsisPath $pkgRoot $fontSub ($subMaxW - (S 2))
+$lblSub.Size = New-Object System.Drawing.Size([int][Math]::Min(((Measure-TextWidthDpi $lblSub.Text $fontSub) + (S 4)), $subMaxW), (S 22))
 $header.Controls.Add($lblSub)
 $lblSub.Cursor = 'Hand'
 $lblSub.Add_Click({
@@ -680,23 +696,43 @@ $lblSub.Add_Click({
 })
 $lblSub.Add_MouseEnter({ $lblSub.ForeColor = $clrHeaderAccent })
 $lblSub.Add_MouseLeave({ $lblSub.ForeColor = $clrOnDarkMuted })
-$script:btnSwitchPkg = New-Object FlatBtn
-$script:btnSwitchPkg.Text = $swChevTxt
-$script:btnSwitchPkg.Font = $fontSmall
-$script:btnSwitchPkg.Location = New-Object System.Drawing.Point([int]($lblSub.Right + (S 2)), (S 42))
-$script:btnSwitchPkg.Size = New-Object System.Drawing.Size($swChevW, (S 24))
-$script:btnSwitchPkg.FlatStyle = 'Flat'
-Apply-FlatBtnTheme $script:btnSwitchPkg $true
+$script:swChevHover = $false
+$script:swChevDown = $false
+$script:btnSwitchPkg = New-Object System.Windows.Forms.Panel
+$script:btnSwitchPkg.Location = New-Object System.Drawing.Point([int]($lblSub.Right + (S 4)), (S 45))
+$script:btnSwitchPkg.Size = New-Object System.Drawing.Size($swChevW, (S 18))
 $script:btnSwitchPkg.BackColor = $clrHeader
-$script:btnSwitchPkg.ForeColor = $clrOnDarkMuted
-$script:btnSwitchPkg.FlatAppearance.BorderSize = 0
-$script:btnSwitchPkg.FlatAppearance.MouseOverBackColor = $clrHeaderBtnBg
-$script:btnSwitchPkg.FlatAppearance.MouseDownBackColor = $clrHeaderBtnBg
 $script:btnSwitchPkg.Cursor = 'Hand'
-$script:btnSwitchPkg.Add_MouseEnter({ $script:btnSwitchPkg.ForeColor = $clrHeaderAccent })
-$script:btnSwitchPkg.Add_MouseLeave({ $script:btnSwitchPkg.ForeColor = $clrOnDarkMuted })
+$script:btnSwitchPkg.Add_Paint({
+    param($s, $e)
+    $g = $e.Graphics
+    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+    $clr = if ($script:swChevDown) { [System.Drawing.Color]::FromArgb(165, $clrHeaderAccent) } elseif ($script:swChevHover) { $clrHeaderAccent } else { $clrOnDarkMuted }
+    $cx = [float]$s.Width / 2.0
+    $cy = [float]$s.Height / 2.0 + 0.5
+    $hw = [float](S 3)
+    $hh = [float](S 2)
+    $gp = New-Object System.Drawing.Drawing2D.GraphicsPath
+    $pen = New-Object System.Drawing.Pen($clr, [float]1.8)
+    try {
+        $pen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
+        $pen.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
+        $pen.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
+        $pts = [System.Drawing.PointF[]]@(
+            (New-Object System.Drawing.PointF(($cx - $hw), ($cy - $hh))),
+            (New-Object System.Drawing.PointF($cx, ($cy + $hh))),
+            (New-Object System.Drawing.PointF(($cx + $hw), ($cy - $hh)))
+        )
+        $gp.AddLines($pts)
+        $g.DrawPath($pen, $gp)
+    } finally { $gp.Dispose(); $pen.Dispose() }
+})
+$script:btnSwitchPkg.Add_MouseEnter({ $script:swChevHover = $true; $script:btnSwitchPkg.Invalidate() })
+$script:btnSwitchPkg.Add_MouseLeave({ $script:swChevHover = $false; $script:swChevDown = $false; $script:btnSwitchPkg.Invalidate() })
+$script:btnSwitchPkg.Add_MouseDown({ $script:swChevDown = $true; $script:btnSwitchPkg.Invalidate() })
+$script:btnSwitchPkg.Add_MouseUp({ $script:swChevDown = $false; $script:btnSwitchPkg.Invalidate() })
 $script:btnSwitchPkg.Add_Click({ Invoke-SwitchPackageRoot })
-Enable-DoubleBuffer $script:btnSwitchPkg
 Enable-DoubleBuffer $script:btnSwitchPkg
 $header.Controls.Add($script:btnSwitchPkg)
 if (-not $script:allButtons) { $script:allButtons = @() }
@@ -2276,10 +2312,14 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     # ── 格式行：7z（高压缩）/ zip（Win10 自带解压兼容，需内置 7za.exe）──
     [void](Find-Packer)
     $fmtY = $row2Y + (S 30) + (S 10)
+    # 左侧 4 字对齐列（压缩格式 / 附带内容）+ 严格两列对齐原生控件，体积估算迁入悬停提示，1x/125%/150% 均零折行
+    $wRowLbl = [int][math]::Max((S 64), ((Measure-TextWidthDpi '压缩格式' $fontBase) + (S 10)))
+    $col1X = $pad + $wRowLbl + (S 8)
+
     $lbFmt = New-Object System.Windows.Forms.Label
     $lbFmt.Text = '压缩格式'
     $lbFmt.AutoSize = $false
-    $lbFmt.Size = New-Object System.Drawing.Size(([int][math]::Max((S 64), ([System.Windows.Forms.TextRenderer]::MeasureText('压缩格式', $fontBase).Width + (S 10)))), (S 24))
+    $lbFmt.Size = New-Object System.Drawing.Size($wRowLbl, (S 24))
     $lbFmt.TextAlign = 'MiddleLeft'
     $lbFmt.ForeColor = $clrText
     $lbFmt.Location = New-Object System.Drawing.Point($pad, $fmtY)
@@ -2289,15 +2329,17 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $rb7z.Text = '7z（高压缩）'
     $rb7z.AutoSize = $true
     $rb7z.ForeColor = $clrText
-    $rb7z.Location = New-Object System.Drawing.Point(($lbFmt.Right + (S 6)), ($fmtY + (S 2)))
+    $rb7z.Location = New-Object System.Drawing.Point($col1X, ($fmtY + (S 2)))
     $dlg.Controls.Add($rb7z)
+
+    $wCol1 = [int][math]::Max(((Measure-TextWidthDpi $rb7z.Text $fontBase) + (S 26)), ((Measure-TextWidthDpi '面板程序' $fontBase) + (S 26)))
+    $col2X = $col1X + $wCol1 + (S 14)
 
     $rbZip = New-Object System.Windows.Forms.RadioButton
     $rbZip.Text = 'zip（Win10 直接解压）'
     $rbZip.AutoSize = $true
     $rbZip.ForeColor = $clrText
-    $wRb7z = [System.Windows.Forms.TextRenderer]::MeasureText($rb7z.Text, $fontBase).Width + (S 28)
-    $rbZip.Location = New-Object System.Drawing.Point(($lbFmt.Right + (S 6) + $wRb7z), ($fmtY + (S 2)))
+    $rbZip.Location = New-Object System.Drawing.Point($col2X, ($fmtY + (S 2)))
     $rbZip.Enabled = [bool]$script:packerSupportsZip
     if (-not $script:packerSupportsZip) { $script:tip.SetToolTip($rbZip, '需在编译时放入 tools\7za.exe 才支持 zip 格式') }
     $dlg.Controls.Add($rbZip)
@@ -2306,8 +2348,7 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $rb7z.Checked = (-not $useZip0)
     $rbZip.Checked = $useZip0
 
-    # 体积按“压缩后”的贡献估算（这才是备份包会变大多少）；比例来自实测：2026-11-23、Edge 158.0.4370.33、7za -mx4：
-    #   Edge\ 559.8 MB → 220.3 MB（39.2%）；面板 EXE 651 KB → 644 KB（98.9%，内嵌资源本就压过）。Edge 大版本更新后可重测。
+    # 体积按压缩后贡献估算并放进悬停提示（保持选项行零括号、严格对齐）
     $edgeRatio = 0.39
     $panelRatio = 0.99
     $panelMbTxt = '0.6'
@@ -2325,78 +2366,38 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
             if ($edgeSum -gt 0) { $edgeMbTxt = [string][math]::Round(($edgeSum / 1MB) * $edgeRatio) }
         }
     } catch { }
-    # ── 同一行：面板程序 + 浏览器程序（两个独立可选项，默认不勾，记忆上次）──
-    $rowY = $fmtY + (S 28) + (S 6)
+
+    # ── 附带内容行：严格与上方 7z / zip 两列左缘对齐，采用原生 CheckBox ──
+    $rowY = $fmtY + (S 28) + (S 4)
+    $lbInc = New-Object System.Windows.Forms.Label
+    $lbInc.Text = '附带内容'
+    $lbInc.AutoSize = $false
+    $lbInc.Size = New-Object System.Drawing.Size($wRowLbl, (S 24))
+    $lbInc.TextAlign = 'MiddleLeft'
+    $lbInc.ForeColor = $clrText
+    $lbInc.Location = New-Object System.Drawing.Point($pad, $rowY)
+    $dlg.Controls.Add($lbInc)
 
     $chkPanel = New-Object System.Windows.Forms.CheckBox
-    $chkPanel.Text = ''
-    $chkPanel.AutoSize = $false
-    $chkPanel.CheckAlign = 'MiddleCenter'
-    $chkPanel.Size = New-Object System.Drawing.Size((S 20), (S 26))
+    $chkPanel.Text = '面板程序'
+    $chkPanel.AutoSize = $true
     $chkPanel.Checked = [bool]$cfg.panel
     $chkPanel.ForeColor = $clrText
-    $chkPanel.Location = New-Object System.Drawing.Point(($pad + (S 2)), $rowY)
+    $chkPanel.Location = New-Object System.Drawing.Point($col1X, ($rowY + (S 2)))
     $dlg.Controls.Add($chkPanel)
 
-    $chkLblPanel = New-Object System.Windows.Forms.Label
-    $chkLblPanel.AutoSize = $false
-    $chkLblPanel.TextAlign = 'MiddleLeft'
-    $chkLblPanel.ForeColor = $clrText
-    $chkLblPanel.AutoEllipsis = $true
-    $chkLblPanel.Text = '包含面板程序'
-    # 同浏览器项：按「基础字号」与「放大 1.35 倍字号」取较大宽度，避免 125%/150% 下折行叠字
-    $wLblPanel = [System.Windows.Forms.TextRenderer]::MeasureText($chkLblPanel.Text, $fontBase).Width
-    try {
-        $fBigP = New-Object System.Drawing.Font($fontBase.FontFamily, [single]($fontBase.SizeInPoints * 1.35))
-        $wBigP = [System.Windows.Forms.TextRenderer]::MeasureText($chkLblPanel.Text, $fBigP).Width
-        if ($wBigP -gt $wLblPanel) { $wLblPanel = $wBigP }
-        $fBigP.Dispose()
-    } catch { }
-    $chkLblPanel.Size = New-Object System.Drawing.Size([int]($wLblPanel + (S 8)), (S 26))
-    $chkLblPanel.Location = New-Object System.Drawing.Point(($pad + (S 22)), $rowY)
-    $chkLblPanel.Add_Click({ $chkPanel.Checked = -not $chkPanel.Checked })
-    $dlg.Controls.Add($chkLblPanel)
-
-    # 勾选框只画方块、文字交给同高的独立 Label —— 两者都在 26px 行内垂直居中，彻底消除基线偏差
     $chkFull = New-Object System.Windows.Forms.CheckBox
-    $chkFull.Text = ''
-    $chkFull.AutoSize = $false
-    $chkFull.CheckAlign = 'MiddleCenter'
-    $chkFull.Size = New-Object System.Drawing.Size((S 20), (S 26))
+    $chkFull.Text = '浏览器程序'
+    $chkFull.AutoSize = $true
     $chkFull.Checked = [bool]$cfg.full
     $chkFull.ForeColor = $clrText
-    $chkFull.Location = New-Object System.Drawing.Point([int]($chkLblPanel.Right + (S 14)), $rowY)
+    $chkFull.Location = New-Object System.Drawing.Point($col2X, ($rowY + (S 2)))
     $dlg.Controls.Add($chkFull)
 
-    $chkLblFull = New-Object System.Windows.Forms.Label
-    $chkLblFull.AutoSize = $false
-    $chkLblFull.TextAlign = 'MiddleLeft'
-    $chkLblFull.ForeColor = $clrText
-    $chkLblFull.Text = $(if ($edgeMbTxt) { '包含浏览器程序（压缩后约 +' + $edgeMbTxt + ' MB）' } else { '包含浏览器程序（本机还没有 Edge 程序）' })
-    $chkLblFull.AutoEllipsis = $true
-    # 宽度取「基础字号」与「放大 1.35 倍字号」的较大值：不同 DPI 下 TextRenderer 与控件实际渲染会差一档，
-    # 只按基础字号量会在 125%/150% 下折行，两行挤进 26px 高就变成叠字（.258 修的就是这个）
-    $wLblFull = 0
-    $wLblFull = [System.Windows.Forms.TextRenderer]::MeasureText($chkLblFull.Text, $fontBase).Width
-    try {
-        $fBig = New-Object System.Drawing.Font($fontBase.FontFamily, [single]($fontBase.SizeInPoints * 1.35))
-        $wBig = [System.Windows.Forms.TextRenderer]::MeasureText($chkLblFull.Text, $fBig).Width
-        if ($wBig -gt $wLblFull) { $wLblFull = $wBig }
-        $fBig.Dispose()
-    } catch { }
-    $wLblFull = [int]($wLblFull + (S 8))
-    $wLblFullMax = $inner - ($chkFull.Left - $pad)
-    if ($wLblFull -gt $wLblFullMax) { $wLblFull = $wLblFullMax }
-    $chkLblFull.Size = New-Object System.Drawing.Size([int]$wLblFull, (S 26))
-    $chkLblFull.Location = New-Object System.Drawing.Point([int]($chkFull.Right + (S 2)), $rowY)
-    $chkLblFull.Add_Click({ $chkFull.Checked = -not $chkFull.Checked })
-    $dlg.Controls.Add($chkLblFull)
-
-    # 括号里省掉的“换机用途”放进悬停提示，信息不丢
-    $script:tip.SetToolTip($chkLblPanel, '把面板 EXE 一起打包：换机时解压双击它就能就地部署 Edge')
-    $script:tip.SetToolTip($chkPanel, '把面板 EXE 一起打包：换机时解压双击它就能就地部署 Edge')
-    $script:tip.SetToolTip($chkLblFull, '把整份 Edge 程序一起打包，适合离线换机或重装')
-    $script:tip.SetToolTip($chkFull, '把整份 Edge 程序一起打包，适合离线换机或重装')
+    $tipPanelTxt = ('一并打包面板 EXE（压缩后约 +' + $panelMbTxt + ' MB），换机解压双击即可部署 Edge')
+    $tipFullTxt = $(if ($edgeMbTxt) { '一并打包 Edge 程序目录（压缩后约 +' + $edgeMbTxt + ' MB），适合离线换机或重装' } else { '当前目录未检测到 Edge 程序，仅打包用户数据' })
+    $script:tip.SetToolTip($chkPanel, $tipPanelTxt)
+    $script:tip.SetToolTip($chkFull, $tipFullTxt)
 
     $fullNoteText = '所有备份共用上方保留份数，按时间自动轮转。'
     $fullNoteY = $rowY + (S 26) + (S 2)
@@ -3165,11 +3166,11 @@ function Update-PathLabel {
     if (-not $lblSub) { return }
     $t = Format-MiddleEllipsisPath $pkgRoot $fontSub ($subMaxW - (S 2))
     $lblSub.Text = $t
-    $w = ([System.Windows.Forms.TextRenderer]::MeasureText($t, $fontSub).Width) + (S 4)
+    $w = (Measure-TextWidthDpi $t $fontSub) + (S 4)
     if ($w -gt $subMaxW) { $w = $subMaxW }
     $lblSub.Size = New-Object System.Drawing.Size([int]$w, (S 22))
     if ($script:btnSwitchPkg) {
-        $script:btnSwitchPkg.Location = New-Object System.Drawing.Point([int]($lblSub.Right + (S 2)), (S 42))
+        $script:btnSwitchPkg.Location = New-Object System.Drawing.Point([int]($lblSub.Right + (S 4)), (S 45))
     }
     if ($script:tip) { $script:tip.SetToolTip($lblSub, ('单击打开目录：' + $pkgRoot)) }
 }
