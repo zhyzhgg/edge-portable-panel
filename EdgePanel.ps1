@@ -2300,12 +2300,15 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $rb7z.Checked = (-not $useZip0)
     $rbZip.Checked = $useZip0
 
-    # 两个勾选项的体积按当前实际大小实时算（Edge 随版本变、面板 EXE 也会变），不写死
+    # 体积按“压缩后”的贡献估算（这才是备份包会变大多少）；比例来自实测：2026-11-23、Edge 158.0.4370.33、7za -mx4：
+    #   Edge\ 559.8 MB → 220.3 MB（39.2%）；面板 EXE 651 KB → 644 KB（98.9%，内嵌资源本就压过）。Edge 大版本更新后可重测。
+    $edgeRatio = 0.39
+    $panelRatio = 0.99
     $panelMbTxt = '0.6'
     try {
         if ($env:EP_EXEPATH -and (Test-Path -LiteralPath $env:EP_EXEPATH)) {
-            $panelMbTxt = [string][math]::Round((Get-Item -LiteralPath $env:EP_EXEPATH).Length / 1MB, 1)
-            if ($panelMbTxt -eq '0') { $panelMbTxt = '0.6' }
+            $pMb = ((Get-Item -LiteralPath $env:EP_EXEPATH).Length / 1MB) * $panelRatio
+            $panelMbTxt = [string][math]::Max(0.1, [math]::Round($pMb, 1))
         }
     } catch { }
     $edgeMbTxt = ''
@@ -2313,7 +2316,7 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
         $edgeDirDlg = Join-Path $pkgRoot 'Edge'
         if (Test-Path -LiteralPath $edgeDirDlg) {
             $edgeSum = (Get-ChildItem -LiteralPath $edgeDirDlg -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
-            if ($edgeSum -gt 0) { $edgeMbTxt = [string][math]::Round($edgeSum / 1MB) }
+            if ($edgeSum -gt 0) { $edgeMbTxt = [string][math]::Round(($edgeSum / 1MB) * $edgeRatio) }
         }
     } catch { }
     # ── 第 3/4 行：面板程序（默认不勾，记忆上次）+ 浏览器程序（默认不勾，记忆上次）──
@@ -2335,7 +2338,7 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $chkLblPanel.Size = New-Object System.Drawing.Size(($inner - (S 26)), (S 26))
     $chkLblPanel.TextAlign = 'MiddleLeft'
     $chkLblPanel.ForeColor = $clrText
-    $chkLblPanel.Text = '包含面板程序（' + $panelMbTxt + ' MB，换机解压可双击部署）'
+    $chkLblPanel.Text = '包含面板程序（压缩后约 +' + $panelMbTxt + ' MB，换机解压可双击部署）'
     $chkLblPanel.Location = New-Object System.Drawing.Point(($pad + (S 22)), $panelY)
     $chkLblPanel.Add_Click({ $chkPanel.Checked = -not $chkPanel.Checked })
     $dlg.Controls.Add($chkLblPanel)
@@ -2355,12 +2358,12 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $chkLblFull.Size = New-Object System.Drawing.Size(($inner - (S 26)), (S 26))
     $chkLblFull.TextAlign = 'MiddleLeft'
     $chkLblFull.ForeColor = $clrText
-    $chkLblFull.Text = $(if ($edgeMbTxt) { '包含浏览器程序（' + $edgeMbTxt + ' MB，离线换机直接用）' } else { '包含浏览器程序（本机还没有 Edge 程序）' })
+    $chkLblFull.Text = $(if ($edgeMbTxt) { '包含浏览器程序（压缩后约 +' + $edgeMbTxt + ' MB，离线换机直接用）' } else { '包含浏览器程序（本机还没有 Edge 程序）' })
     $chkLblFull.Location = New-Object System.Drawing.Point(($pad + (S 22)), $fullY)
     $chkLblFull.Add_Click({ $chkFull.Checked = -not $chkFull.Checked })
     $dlg.Controls.Add($chkLblFull)
 
-    $fullNoteText = '备份会压缩，实际体积更小；各备份共用上方保留份数，按时间轮转。'
+    $fullNoteText = '所有备份共用上方保留份数，按时间自动轮转。'
     $fullNoteY = $fullY + (S 26) + (S 2)
     $hFullNote = Get-TextHeight $fullNoteText $fontSmall $inner
     $fullNote = New-Object System.Windows.Forms.Label
@@ -4881,6 +4884,7 @@ Write-Log ('面板已启动；包根：' + $pkgRoot)
 
 $form.ResumeLayout($false)
 [void]$form.ShowDialog()
+
 
 
 
