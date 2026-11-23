@@ -2296,27 +2296,68 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
             ([System.Windows.Forms.TextRenderer]::MeasureText($txt, $fBigDlg).Width))
     }
 
-    # ── 格式行 + 附加项行：整块自绘 ────────────────────────────────────────────
-    # WinForms 自带的圆点(○)与方块(□)图形尺寸不同、内部留白也不同，控件级对齐最多到 ±2px 且随 DPI 漂。
-    # 这里两行统一手绘：圆点 14px、方块 13px，中心线取同一个 cx、文字基线取同一个行中心，坐标完全可控。
-    # 真正的状态仍由隐藏的 RadioButton / CheckBox 持有（下游代码继续读 .Checked，语义不变）。
-    $fmtLabelTxt = '压缩格式'
-    $opt7zTxt    = '7z（高压缩）'
-    $optZipTxt   = 'zip（Win10 直接解压）'
-    $optPanelTxt = '包含面板程序'
+    $lbFmt = New-Object System.Windows.Forms.Label
+    $lbFmt.Text = '压缩格式'
+    $lbFmt.AutoSize = $false
+    $lbFmt.Size = New-Object System.Drawing.Size(([int][math]::Max((S 64), ((& $measureSafe '压缩格式') + (S 10)))), (S 26))
+    $lbFmt.TextAlign = 'MiddleLeft'
+    $lbFmt.ForeColor = $clrText
+    $lbFmt.Location = New-Object System.Drawing.Point($pad, $fmtY)
+    $dlg.Controls.Add($lbFmt)
 
-    $useZip0 = ($cfg.fmt -eq 'zip') -and [bool]$script:packerSupportsZip
-
+    # 两个单选按钮只画圆点（Text 为空、字形居中），文字交给同高 Label ——
+    # 这样四段文字（压缩格式 / 7z / zip / 两个勾选项）全是 26px 高的 Label，基线天然一致，不会出现谁高谁低
     $rb7z = New-Object System.Windows.Forms.RadioButton
-    $rb7z.Visible = $false
-    $rb7z.Checked = (-not $useZip0)
+    $rb7z.Text = ''
+    $rb7z.AutoSize = $false
+    $rb7z.CheckAlign = 'MiddleCenter'
+    $rb7z.ForeColor = $clrText
+    $rb7z.Size = New-Object System.Drawing.Size((S 20), (S 26))
+    $rb7z.Location = New-Object System.Drawing.Point(($lbFmt.Right + (S 6)), $fmtY)
     $dlg.Controls.Add($rb7z)
 
+    $lbl7z = New-Object System.Windows.Forms.Label
+    $lbl7z.AutoSize = $false
+    $lbl7z.TextAlign = 'MiddleLeft'
+    $lbl7z.ForeColor = $clrText
+    $lbl7z.AutoEllipsis = $true
+    $lbl7z.Text = '7z（高压缩）'
+    $lbl7z.Size = New-Object System.Drawing.Size([int]((& $measureSafe $lbl7z.Text) + (S 6)), (S 26))
+    $lbl7z.Location = New-Object System.Drawing.Point([int]($rb7z.Right + (S 2)), $fmtY)
+    $lbl7z.Add_Click({ $rb7z.Checked = $true })
+    $dlg.Controls.Add($lbl7z)
+
     $rbZip = New-Object System.Windows.Forms.RadioButton
-    $rbZip.Visible = $false
-    $rbZip.Checked = $useZip0
-    $rbZip.Enabled = [bool]$script:packerSupportsZip
+    $rbZip.Text = ''
+    $rbZip.AutoSize = $false
+    $rbZip.CheckAlign = 'MiddleCenter'
+    $rbZip.ForeColor = $clrText
+    $rbZip.Size = New-Object System.Drawing.Size((S 20), (S 26))
+    $rbZip.Location = New-Object System.Drawing.Point([int]($lbl7z.Right + (S 10)), $fmtY)
     $dlg.Controls.Add($rbZip)
+
+    $lblZip = New-Object System.Windows.Forms.Label
+    $lblZip.AutoSize = $false
+    $lblZip.TextAlign = 'MiddleLeft'
+    $lblZip.ForeColor = $clrText
+    $lblZip.AutoEllipsis = $true
+    $lblZip.Text = 'zip（Win10 直接解压）'
+    $lblZip.Size = New-Object System.Drawing.Size([int]((& $measureSafe $lblZip.Text) + (S 6)), (S 26))
+    $lblZip.Location = New-Object System.Drawing.Point([int]($rbZip.Right + (S 2)), $fmtY)
+    $lblZip.Add_Click({ if ($rbZip.Enabled) { $rbZip.Checked = $true } })
+    $dlg.Controls.Add($lblZip)
+
+    # zip 不可用（没内嵌 7za）时两者一起置灰
+    if (-not $script:packerSupportsZip) {
+        $rbZip.Enabled = $false
+        $lblZip.ForeColor = $clrMuted
+        $script:tip.SetToolTip($lblZip, '需在编译时放入 tools\7za.exe 才支持 zip 格式')
+        $script:tip.SetToolTip($rbZip, '需在编译时放入 tools\7za.exe 才支持 zip 格式')
+    }
+
+    $useZip0 = ($cfg.fmt -eq 'zip') -and [bool]$script:packerSupportsZip
+    $rb7z.Checked = (-not $useZip0)
+    $rbZip.Checked = $useZip0
 
     # 体积按“压缩后”的贡献估算（这才是备份包会变大多少）；比例来自实测：2026-11-23、Edge 158.0.4370.33、7za -mx4：
     #   Edge\ 559.8 MB → 220.3 MB（39.2%）；面板 EXE 651 KB → 644 KB（98.9%，内嵌资源本就压过）。Edge 大版本更新后可重测。
@@ -2337,116 +2378,77 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
             if ($edgeSum -gt 0) { $edgeMbTxt = [string][math]::Round(($edgeSum / 1MB) * $edgeRatio) }
         }
     } catch { }
-    $optFullTxt = if ($edgeMbTxt) { '包含浏览器程序（+' + $edgeMbTxt + ' MB）' } else { '包含浏览器程序（本机还没有 Edge 程序）' }
+    # ── 同一行：面板程序 + 浏览器程序（两个独立可选项，默认不勾，记忆上次）
+    # 两列锚点与上面「压缩格式」行共用：第一个勾选框对齐 7z、第二个对齐 zip；宽度不够时退回左对齐
+    $rowY = $fmtY + (S 28) + (S 6)
 
     $chkPanel = New-Object System.Windows.Forms.CheckBox
-    $chkPanel.Visible = $false
+    $chkPanel.Text = ''
+    $chkPanel.AutoSize = $false
+    $chkPanel.CheckAlign = 'MiddleCenter'
+    $chkPanel.Size = New-Object System.Drawing.Size((S 20), (S 26))
     $chkPanel.Checked = [bool]$cfg.panel
+    $chkPanel.ForeColor = $clrText
     $dlg.Controls.Add($chkPanel)
 
+    $chkLblPanel = New-Object System.Windows.Forms.Label
+    $chkLblPanel.AutoSize = $false
+    $chkLblPanel.TextAlign = 'MiddleLeft'
+    $chkLblPanel.ForeColor = $clrText
+    $chkLblPanel.AutoEllipsis = $true
+    $chkLblPanel.Text = '包含面板程序'
+    $wLblPanel = (& $measureSafe $chkLblPanel.Text) + (S 8)
+    $chkLblPanel.Size = New-Object System.Drawing.Size([int]$wLblPanel, (S 26))
+    $dlg.Controls.Add($chkLblPanel)
+
+    # 勾选框只画方块、文字交给同高的独立 Label —— 两者都在 26px 行内垂直居中，彻底消除基线偏差
     $chkFull = New-Object System.Windows.Forms.CheckBox
-    $chkFull.Visible = $false
+    $chkFull.Text = ''
+    $chkFull.AutoSize = $false
+    $chkFull.CheckAlign = 'MiddleCenter'
+    $chkFull.Size = New-Object System.Drawing.Size((S 20), (S 26))
     $chkFull.Checked = [bool]$cfg.full
+    $chkFull.ForeColor = $clrText
     $dlg.Controls.Add($chkFull)
 
-    # 几何：所有列锚点只算一次，两行共用
-    $rowH   = (S 26)
-    $glyphW = (S 20)                       # 图形占位宽（圆点/方块中心都落在这段的中点）
-    $wFmtT  = (& $measureSafe $fmtLabelTxt)
-    $w7zT   = (& $measureSafe $opt7zTxt)
-    $wZipT   = (& $measureSafe $optZipTxt)
-    $wPnlT  = (& $measureSafe $optPanelTxt)
-    $wFullT = (& $measureSafe $optFullTxt)
-    $col1   = $pad + $wFmtT + (S 12)
-    $col2   = $col1 + $glyphW + $w7zT + (S 24)
-    $optRight = $col2 + $glyphW + $wFullT + (S 4)
+    $chkLblFull = New-Object System.Windows.Forms.Label
+    $chkLblFull.AutoSize = $false
+    $chkLblFull.TextAlign = 'MiddleLeft'
+    $chkLblFull.ForeColor = $clrText
+    $chkLblFull.AutoEllipsis = $true
+    $chkLblFull.Text = $(if ($edgeMbTxt) { '包含浏览器程序（+' + $edgeMbTxt + ' MB）' } else { '包含浏览器程序（本机还没有 Edge 程序）' })
+    $wLblFull = (& $measureSafe $chkLblFull.Text) + (S 8)
+    $wLblFullMax = $inner - ((S 20) + (S 2)) - $pad
+    if ($wLblFull -gt $wLblFullMax) { $wLblFull = $wLblFullMax }
+    $chkLblFull.Size = New-Object System.Drawing.Size([int]$wLblFull, (S 26))
+    $dlg.Controls.Add($chkLblFull)
 
-    $pnlOpt = New-Object System.Windows.Forms.Panel
-    $pnlOpt.BackColor = $clrBg
-    $pnlOpt.Location = New-Object System.Drawing.Point(0, $fmtY)
-    $pnlOpt.Size = New-Object System.Drawing.Size($w, ($rowH * 2))
-    $pnlOpt.Add_Paint({
-        param($s, $e)
-        $g = $e.Graphics
-        $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-        $colTxt = $clrText
-        $colMut = $clrMuted
-        $acc = $clrAccent
-        # 用 DrawString 手算垂直居中：TextRenderer.DrawText 有 (rect,color) 与 (rect,flags,color) 两个重载，
-        # PowerShell 按位置匹配会挑错重载并把 flags 当颜色传入（实测报错），这里绕开它。
-        $drawTxt = {
-            param([string]$txt, [int]$x, [int]$rowTop, [System.Drawing.Color]$clr)
-            $h = $g.MeasureString($txt, $fontBase).Height
-            $ty = $rowTop + ($rowH - $h) / 2
-            $br = New-Object System.Drawing.SolidBrush($clr)
-            $g.DrawString($txt, $fontBase, $br, [single]$x, [single]$ty)
-            $br.Dispose()
-        }
-        # 第 1 行：压缩格式 + 两个单选
-        & $drawTxt '压缩格式' $pad 0 $colTxt
-        $cy1 = [int]($rowH / 2)
-        # 7z 圆点
-        $pen = New-Object System.Drawing.Pen($acc, 1.5)
-        $g.DrawEllipse($pen, [int]($col1 + 3), [int]($cy1 - 7), 14, 14)
-        if ($rb7z.Checked) { $br = New-Object System.Drawing.SolidBrush($acc); $g.FillEllipse($br, [int]($col1 + 6), [int]($cy1 - 4), 8, 8); $br.Dispose() }
-        $pen.Dispose()
-        & $drawTxt '7z（高压缩）' ([int]($col1 + $glyphW)) 0 $colTxt
-        # zip 圆点
-        $zipOn = [bool]$rbZip.Enabled
-        $pen2 = New-Object System.Drawing.Pen($(if ($zipOn) { $acc } else { $colMut }), 1.5)
-        $g.DrawEllipse($pen2, [int]($col2 + 3), [int]($cy1 - 7), 14, 14)
-        if ($rbZip.Checked) { $br2 = New-Object System.Drawing.SolidBrush($(if ($zipOn) { $acc } else { $colMut })); $g.FillEllipse($br2, [int]($col2 + 6), [int]($cy1 - 4), 8, 8); $br2.Dispose() }
-        $pen2.Dispose()
-        & $drawTxt 'zip（Win10 直接解压）' ([int]($col2 + $glyphW)) 0 $(if ($zipOn) { $colTxt } else { $colMut })
-        # 第 2 行：两个复选
-        $yt = $rowH
-        $cy2 = [int]($yt + $rowH / 2)
-        $penS = New-Object System.Drawing.Pen($acc, 1.5)
-        $g.DrawRectangle($penS, [int]($col1 + 4), [int]($cy2 - 6), 13, 13)
-        if ($chkPanel.Checked) {
-            $penC = New-Object System.Drawing.Pen($acc, 2)
-            $g.DrawLines($penC, [System.Drawing.Point[]]@(
-                (New-Object System.Drawing.Point([int]($col1 + 7), [int]$cy2)),
-                (New-Object System.Drawing.Point([int]($col1 + 10), [int]($cy2 + 3))),
-                (New-Object System.Drawing.Point([int]($col1 + 15), [int]($cy2 - 4)))))
-            $penC.Dispose()
-        }
-        $penS.Dispose()
-        & $drawTxt '包含面板程序' ([int]($col1 + $glyphW)) $yt $colTxt
-        $penS2 = New-Object System.Drawing.Pen($acc, 1.5)
-        $g.DrawRectangle($penS2, [int]($col2 + 4), [int]($cy2 - 6), 13, 13)
-        if ($chkFull.Checked) {
-            $penC2 = New-Object System.Drawing.Pen($acc, 2)
-            $g.DrawLines($penC2, [System.Drawing.Point[]]@(
-                (New-Object System.Drawing.Point([int]($col2 + 7), [int]$cy2)),
-                (New-Object System.Drawing.Point([int]($col2 + 10), [int]($cy2 + 3))),
-                (New-Object System.Drawing.Point([int]($col2 + 15), [int]($cy2 - 4)))))
-            $penC2.Dispose()
-        }
-        $penS2.Dispose()
-        & $drawTxt $optFullTxt ([int]($col2 + $glyphW)) $yt $colTxt
-        # 行内悬停不做，保持简单
-        $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::Default
-    })
-    $pnlOpt.Add_MouseDown({
-        param($s, $e)
-        $x = $e.X; $y = $e.Y
-        if ($y -lt $rowH) {
-            if ($x -ge $col1 -and $x -le ($col1 + $glyphW + $w7zT)) { $rb7z.Checked = $true }
-            elseif ($x -ge $col2 -and $x -le ($col2 + $glyphW + $wZipT)) { if ($rbZip.Enabled) { $rbZip.Checked = $true } }
-        } else {
-            if ($x -ge $col1 -and $x -le ($col1 + $glyphW + $wPnlT)) { $chkPanel.Checked = -not $chkPanel.Checked }
-            elseif ($x -ge $col2 -and $x -le ($col2 + $glyphW + $wFullT)) { $chkFull.Checked = -not $chkFull.Checked }
-        }
-        $pnlOpt.Invalidate()
-    })
-    $dlg.Controls.Add($pnlOpt)
-    $script:tip.SetToolTip($pnlOpt, ('面板项：把面板 EXE 一起打包（换机解压双击即可部署）；浏览器项：整份 Edge 程序' + $(if ($edgeMbTxt) { '（压缩后约 +' + $edgeMbTxt + ' MB）' } else { '' }) + '，适合离线换机或重装'))
-    if (-not $script:packerSupportsZip) { $script:tip.SetToolTip($pnlOpt, 'zip 需在编译时放入 tools\7za.exe 才可用；其它同上') }
+    # 定锚：能对齐就对齐（视觉上两行成两列），放不下退回左对齐（宁可不对齐也不能撞边）
+    $col1X = [int][math]::Max([int]$rb7z.Left, $pad)
+    $col2X = [int]$rbZip.Left
+    $needRight = $col2X + (S 20) + (S 2) + $wLblFull
+    if ($col2X -gt $col1X -and $needRight -le ($pad + $inner)) {
+        $xP = $col1X
+        $xFull = $col2X
+    } else {
+        $xP = $pad + (S 2)
+        $xFull = $xP + (S 20) + $wLblPanel + (S 14)
+    }
+    $chkPanel.Location    = New-Object System.Drawing.Point($xP, $rowY)
+    $chkLblPanel.Location = New-Object System.Drawing.Point([int]($xP + (S 20) + (S 2)), $rowY)
+    $chkFull.Location     = New-Object System.Drawing.Point([int]$xFull, $rowY)
+    $chkLblFull.Location  = New-Object System.Drawing.Point([int]($xFull + (S 20) + (S 2)), $rowY)
+    $chkLblPanel.Add_Click({ $chkPanel.Checked = -not $chkPanel.Checked })
+    $chkLblFull.Add_Click({ $chkFull.Checked = -not $chkFull.Checked })
 
+    # 括号里省掉的“换机用途”放进悬停提示，信息不丢
+    $script:tip.SetToolTip($chkLblPanel, '把面板 EXE 一起打包：换机时解压双击它就能就地部署 Edge')
+    $script:tip.SetToolTip($chkPanel, '把面板 EXE 一起打包：换机时解压双击它就能就地部署 Edge')
+    $script:tip.SetToolTip($chkLblFull, '把整份 Edge 程序一起打包（压缩后约 +' + $edgeMbTxt + ' MB），适合离线换机或重装')
+    $script:tip.SetToolTip($chkFull, '把整份 Edge 程序一起打包，适合离线换机或重装')
 
     $fullNoteText = '所有备份共用上方保留份数，按时间自动轮转。'
-    $fullNoteY = $fmtY + $rowH * 2 + (S 2)
+    $fullNoteY = $rowY + (S 26) + (S 2)
     $hFullNote = Get-TextHeight $fullNoteText $fontSmall $inner
     $fullNote = New-Object System.Windows.Forms.Label
     $fullNote.AutoSize = $false
@@ -4957,7 +4959,6 @@ Write-Log ('面板已启动；包根：' + $pkgRoot)
 
 $form.ResumeLayout($false)
 [void]$form.ShowDialog()
-
 
 
 
