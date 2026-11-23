@@ -675,32 +675,19 @@ function Enable-DoubleBuffer($c) {
         if ($pi) { $pi.SetValue($c, $true, $null) }
     } catch { }
 }
-# 目录末尾的矢量折线箭头（18x18 无边框热区，GraphicsPath 自绘 6x4 圆头 V 形，垂直对齐路径文字墨迹中心）
-$swChevW = S 18
-$subMaxW = (S 390) - $swChevW - (S 6)
-$lblSub = New-Object System.Windows.Forms.Label
-$lblSub.Font = $fontSub
-$lblSub.ForeColor = $clrOnDarkMuted
-$lblSub.AutoSize = $false
-$lblSub.TextAlign = 'MiddleLeft'
-$lblSub.Size = New-Object System.Drawing.Size($subMaxW, (S 22))
-$lblSub.Location = New-Object System.Drawing.Point((S 20), (S 43))
-$lblSub.Text = Format-MiddleEllipsisPath $pkgRoot $fontSub ($subMaxW - (S 2))
-$lblSub.Size = New-Object System.Drawing.Size([int][Math]::Min(((Measure-TextWidthDpi $lblSub.Text $fontSub) + (S 4)), $subMaxW), (S 22))
-$header.Controls.Add($lblSub)
-$lblSub.Cursor = 'Hand'
-$lblSub.Add_Click({
-    param($s, $e)
-    if ($e -is [System.Windows.Forms.MouseEventArgs] -and $e.Button -ne [System.Windows.Forms.MouseButtons]::Left) { return }
-    try { Start-Process explorer.exe -ArgumentList ('"' + $pkgRoot + '"') } catch { }
-})
-$lblSub.Add_MouseEnter({ $lblSub.ForeColor = $clrHeaderAccent })
-$lblSub.Add_MouseLeave({ $lblSub.ForeColor = $clrOnDarkMuted })
+# 顶栏路径整体切换器（常态隐形无边框，悬停浮出圆角暗色胶囊；左键切换目录，右键资源管理器打开）
+$swPadX = S 6
+$swChevGap = S 6
+$swChevBox = S 10
+$swMaxW = S 400
+$subMaxW = $swMaxW - ($swPadX * 2) - $swChevGap - $swChevBox
+$script:lblSubText = Format-MiddleEllipsisPath $pkgRoot $fontSub ($subMaxW - (S 2))
 $script:swChevHover = $false
 $script:swChevDown = $false
 $script:btnSwitchPkg = New-Object System.Windows.Forms.Panel
-$script:btnSwitchPkg.Location = New-Object System.Drawing.Point([int]($lblSub.Right + (S 4)), (S 45))
-$script:btnSwitchPkg.Size = New-Object System.Drawing.Size($swChevW, (S 18))
+$script:btnSwitchPkg.Location = New-Object System.Drawing.Point((S 14), (S 42))
+$swInitTw = [int][Math]::Min((Measure-TextWidthDpi $script:lblSubText $fontSub), $subMaxW)
+$script:btnSwitchPkg.Size = New-Object System.Drawing.Size([int][Math]::Min(($swInitTw + ($swPadX * 2) + $swChevGap + $swChevBox + (S 2)), $swMaxW), (S 24))
 $script:btnSwitchPkg.BackColor = $clrHeader
 $script:btnSwitchPkg.Cursor = 'Hand'
 $script:btnSwitchPkg.Add_Paint({
@@ -708,31 +695,73 @@ $script:btnSwitchPkg.Add_Paint({
     $g = $e.Graphics
     $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
     $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
-    $clr = if ($script:swChevDown) { [System.Drawing.Color]::FromArgb(165, $clrHeaderAccent) } elseif ($script:swChevHover) { $clrHeaderAccent } else { $clrOnDarkMuted }
-    $cx = [float]$s.Width / 2.0
-    $cy = [float]$s.Height / 2.0 + 0.5
-    $hw = [float](S 3)
+    $active = $s.Enabled
+    if ($active -and ($script:swChevHover -or $script:swChevDown)) {
+        $bgClr = if ($script:swChevDown) { $clrHeaderBtnHover } else { $clrHeaderBtnBg }
+        $r = [float](S 4)
+        $d = $r * 2.0
+        $w = [float]($s.Width - 1)
+        $h = [float]($s.Height - 1)
+        $bgPath = New-Object System.Drawing.Drawing2D.GraphicsPath
+        $bgBr = New-Object System.Drawing.SolidBrush($bgClr)
+        try {
+            $bgPath.AddArc(0.0, 0.0, $d, $d, 180.0, 90.0)
+            $bgPath.AddArc(($w - $d), 0.0, $d, $d, 270.0, 90.0)
+            $bgPath.AddArc(($w - $d), ($h - $d), $d, $d, 0.0, 90.0)
+            $bgPath.AddArc(0.0, ($h - $d), $d, $d, 90.0, 90.0)
+            $bgPath.CloseFigure()
+            $g.FillPath($bgBr, $bgPath)
+        } finally {
+            $bgBr.Dispose()
+            $bgPath.Dispose()
+        }
+    }
+    $txtClr = if ($active -and ($script:swChevHover -or $script:swChevDown)) { $clrOnDark } else { $clrOnDarkMuted }
+    $txtRect = New-Object System.Drawing.Rectangle($swPadX, 0, [int]([Math]::Max(8, $s.Width - ($swPadX * 2) - $swChevGap - $swChevBox)), $s.Height)
+    $tFlags = [System.Windows.Forms.TextFormatFlags]::Left -bor [System.Windows.Forms.TextFormatFlags]::VerticalCenter -bor [System.Windows.Forms.TextFormatFlags]::NoPrefix -bor [System.Windows.Forms.TextFormatFlags]::EndEllipsis -bor [System.Windows.Forms.TextFormatFlags]::NoPadding
+    [System.Windows.Forms.TextRenderer]::DrawText($g, $script:lblSubText, $fontSub, $txtRect, $txtClr, $tFlags)
+    $chevClr = if (-not $active) { [System.Drawing.Color]::FromArgb(110, $clrOnDarkMuted) } elseif ($script:swChevDown) { [System.Drawing.Color]::FromArgb(180, $clrHeaderAccent) } elseif ($script:swChevHover) { $clrHeaderAccent } else { [System.Drawing.Color]::FromArgb(165, $clrOnDarkMuted) }
+    $cx = [float]($s.Width - $swPadX - ($swChevBox / 2.0))
+    $cy = [float]($s.Height / 2.0)
+    $hw = [float](S 5) / 2.0
     $hh = [float](S 2)
-    $gp = New-Object System.Drawing.Drawing2D.GraphicsPath
-    $pen = New-Object System.Drawing.Pen($clr, [float]1.8)
+    $vGap = [float](S 3) / 2.0
+    $pen = New-Object System.Drawing.Pen($chevClr, [float]1.4)
+    $gpUp = New-Object System.Drawing.Drawing2D.GraphicsPath
+    $gpDn = New-Object System.Drawing.Drawing2D.GraphicsPath
     try {
         $pen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
         $pen.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
         $pen.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
-        $pts = [System.Drawing.PointF[]]@(
-            (New-Object System.Drawing.PointF(($cx - $hw), ($cy - $hh))),
-            (New-Object System.Drawing.PointF($cx, ($cy + $hh))),
-            (New-Object System.Drawing.PointF(($cx + $hw), ($cy - $hh)))
-        )
-        $gp.AddLines($pts)
-        $g.DrawPath($pen, $gp)
-    } finally { $gp.Dispose(); $pen.Dispose() }
+        $gpUp.AddLines([System.Drawing.PointF[]]@(
+            (New-Object System.Drawing.PointF(($cx - $hw), ($cy - $vGap))),
+            (New-Object System.Drawing.PointF($cx, ($cy - $vGap - $hh))),
+            (New-Object System.Drawing.PointF(($cx + $hw), ($cy - $vGap)))
+        ))
+        $gpDn.AddLines([System.Drawing.PointF[]]@(
+            (New-Object System.Drawing.PointF(($cx - $hw), ($cy + $vGap))),
+            (New-Object System.Drawing.PointF($cx, ($cy + $vGap + $hh))),
+            (New-Object System.Drawing.PointF(($cx + $hw), ($cy + $vGap)))
+        ))
+        $g.DrawPath($pen, $gpUp)
+        $g.DrawPath($pen, $gpDn)
+    } finally { $gpDn.Dispose(); $gpUp.Dispose(); $pen.Dispose() }
 })
 $script:btnSwitchPkg.Add_MouseEnter({ $script:swChevHover = $true; $script:btnSwitchPkg.Invalidate() })
 $script:btnSwitchPkg.Add_MouseLeave({ $script:swChevHover = $false; $script:swChevDown = $false; $script:btnSwitchPkg.Invalidate() })
-$script:btnSwitchPkg.Add_MouseDown({ $script:swChevDown = $true; $script:btnSwitchPkg.Invalidate() })
+$script:btnSwitchPkg.Add_MouseDown({
+    param($s, $e)
+    if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) { $script:swChevDown = $true; $script:btnSwitchPkg.Invalidate() }
+})
 $script:btnSwitchPkg.Add_MouseUp({ $script:swChevDown = $false; $script:btnSwitchPkg.Invalidate() })
-$script:btnSwitchPkg.Add_Click({ Invoke-SwitchPackageRoot })
+$script:btnSwitchPkg.Add_MouseClick({
+    param($s, $e)
+    if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Right) {
+        try { Start-Process explorer.exe -ArgumentList ('"' + $pkgRoot + '"') } catch { }
+    } elseif ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
+        Invoke-SwitchPackageRoot
+    }
+})
 Enable-DoubleBuffer $script:btnSwitchPkg
 $header.Controls.Add($script:btnSwitchPkg)
 if (-not $script:allButtons) { $script:allButtons = @() }
@@ -941,7 +970,6 @@ $script:tip.SetToolTip($script:btnSlimAll, "删除约 380 项非核心组件、�
 $script:tip.SetToolTip($valCache,  "常规清理预计可释放体积（含包根目录 Cache\、GPU/着色器缓存、诊断指标与崩溃转储等）")
 $script:tip.SetToolTip($script:btnBackup, "清理缓存并备份用户数据（支持加密、保留份数与目录设置，可选附带面板本体或 Edge 本体）")
 $script:tip.SetToolTip($script:btnRestore, "从备份包恢复用户数据；含 Edge 本体的完整包可一并恢复程序目录")
-$script:tip.SetToolTip($lblSub, ('单击打开目录：' + $pkgRoot))
 $script:tip.SetToolTip($script:btnSwitchPkg, ('切换便携 Edge 目录（当前：' + $pkgRoot + '）'))
 $script:tip.SetToolTip($lnkRepo, "打开 GitHub 项目主页")
 $script:tip.SetToolTip($lnkIssues, "打开 GitHub Issues 问题列表（可先查看已有记录，避免重复提交）")
@@ -3162,17 +3190,16 @@ function Show-PkgPickerDialog([string[]]$foundDirs, [string]$curExeDir, [string]
 }
 
 function Update-PathLabel {
-    # 路径按可用宽做中段省略，标签宽随文字收缩，下箭头紧贴文字末尾
-    if (-not $lblSub) { return }
+    # 路径按可用宽做中段省略，整体胶囊宽随文字自适应收缩
+    if (-not $script:btnSwitchPkg) { return }
     $t = Format-MiddleEllipsisPath $pkgRoot $fontSub ($subMaxW - (S 2))
-    $lblSub.Text = $t
-    $w = (Measure-TextWidthDpi $t $fontSub) + (S 4)
-    if ($w -gt $subMaxW) { $w = $subMaxW }
-    $lblSub.Size = New-Object System.Drawing.Size([int]$w, (S 22))
-    if ($script:btnSwitchPkg) {
-        $script:btnSwitchPkg.Location = New-Object System.Drawing.Point([int]($lblSub.Right + (S 4)), (S 45))
-    }
-    if ($script:tip) { $script:tip.SetToolTip($lblSub, ('单击打开目录：' + $pkgRoot)) }
+    $script:lblSubText = $t
+    $tw = [int][Math]::Min((Measure-TextWidthDpi $t $fontSub), $subMaxW)
+    $w = $tw + ($swPadX * 2) + $swChevGap + $swChevBox + (S 2)
+    if ($w -gt $swMaxW) { $w = $swMaxW }
+    $script:btnSwitchPkg.Size = New-Object System.Drawing.Size([int]$w, (S 24))
+    $script:btnSwitchPkg.Invalidate()
+    if ($script:tip) { $script:tip.SetToolTip($script:btnSwitchPkg, ("单击切换便携 Edge 目录 · 右键打开目录`n" + $pkgRoot)) }
 }
 
 function Switch-PackageRoot([string]$newRoot, [switch]$CheckRunning) {
@@ -3194,12 +3221,8 @@ function Switch-PackageRoot([string]$newRoot, [switch]$CheckRunning) {
     $script:policyKey = 'HKCU:\SOFTWARE\Policies\Microsoft\Edge_' + $pkName
     $script:policyKeyPlain = $script:policyKey -replace '^HKCU:', 'HKEY_CURRENT_USER'
     $script:statusScript = Build-StatusScript
-    if ($lblSub) {
+    if ($script:btnSwitchPkg) {
         Update-PathLabel
-        if ($script:tip) {
-            $script:tip.SetToolTip($lblSub, ('单击打开目录：' + $norm))
-            if ($script:btnSwitchPkg) { $script:tip.SetToolTip($script:btnSwitchPkg, ('切换便携 Edge 目录（当前：' + $norm + '）')) }
-        }
     }
     if (-not $script:noPackage) { Save-LastPkgRoot $norm }
     # 切换目录后重置依赖旧目录的缓存态，触发新目录的必需件体检、版本复核与策略漂移体检
