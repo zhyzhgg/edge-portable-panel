@@ -104,7 +104,7 @@ $targets = @(
 
     # —— 纯统计 / 诊断日志（可再生，无用户数据；支持通配）——
     @{ Rel = 'Data\Default\load_statistics.db*';                 Note = '站点加载耗时统计库（含 -wal/-shm/-journal 伴生文件，Edge 自动重建）' }
-    @{ Rel = 'Data\Default\*_diagnostic.log*';                   Note = '设置/收藏夹同步诊断日志（纯文本，实测约 0.9 MB）' }
+    @{ Rel = 'Data\Default\*_diagnostic.log*';                   Note = '设置与收藏夹同步诊断日志（纯文本，可安全重建）' }
 )
 # 故意不列入（有副作用 / 含状态，删了会重新弹提示、重新下载或丢配置）：
 #   Data\Crashpad\metadata / settings.dat 留着；只清 reports/attachments/pending（崩溃后才会有大文件，平时 0 字节）
@@ -280,7 +280,7 @@ function Show-StorageAudit([string]$dataDir) {
         foreach ($r in $site) { Write-Host ('  {0,8:N1} MB  {1}' -f $r.MB, $r.Host) -ForegroundColor DarkGray }
     }
     if ($ext.Count -gt 0 -or $site.Count -gt 0) {
-        Write-Host '（想减少占用：扩展去 edge://extensions 停用或卸载；站点数据去 edge://settings/content/all 或站点自己的设置里清）' -ForegroundColor DarkGray
+        Write-Host '（想减少占用：扩展可在 edge://extensions 停用或卸载；站点数据可在 edge://settings/content/all 或站点设置中清理）' -ForegroundColor DarkGray
     }
 }
 
@@ -309,9 +309,7 @@ if (-not (Test-Path -LiteralPath $data)) {
 }
 
 # ---- 1. Edge 是否在跑 ---------------------------------------------------------
-$pkgPrefix = $Root.TrimEnd('\') + '\'
-$running = @(Get-Process -Name msedge -ErrorAction SilentlyContinue |
-             Where-Object { $_.Path -and $_.Path.StartsWith($pkgPrefix, [System.StringComparison]::OrdinalIgnoreCase) })
+$running = @((Get-EdgeProcs $Root).Procs)
 if ($running.Count -gt 0) {
     Write-Host ("[提示] 本便携版有 " + $running.Count + " 个 msedge 进程在运行（pid " + (($running | ForEach-Object Id) -join ', ') + "）") -ForegroundColor Yellow
     $doClose = $false
@@ -341,8 +339,7 @@ if ($running.Count -gt 0) {
             $stillAlive = @(Get-Process -Id ($running | ForEach-Object Id) -ErrorAction SilentlyContinue)
             if ($stillAlive.Count -eq 0) { break }
         }
-        $still = @(Get-Process -Name msedge -ErrorAction SilentlyContinue |
-                   Where-Object { $_.Path -and $_.Path.StartsWith($pkgPrefix, [System.StringComparison]::OrdinalIgnoreCase) })
+        $still = @((Get-EdgeProcs $Root).Procs)
         if ($still.Count -gt 0) { $still | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2 }
         Write-Host '       已关闭，继续清理。' -ForegroundColor Gray
     }
@@ -389,7 +386,7 @@ $total = [math]::Round((($plan | Where-Object { $_.State -eq '可清' } | Measur
 Write-Host ''
 Write-Host ("预计可释放：" + $total + " MB") -ForegroundColor Cyan
 Write-Host '(书签 / 密码 / 历史 / 登录态 / 扩展本体 / 语言模型 都不在清单里，不会被动到)' -ForegroundColor DarkGray
-if (-not $Apply) { Show-Composition $compBefore '当前剩余构成（Top 5，本脚本不会动它们）' }
+if (-not $Apply) { Show-Composition $compBefore '当前剩余构成（Top 5，受保护项不清理）' }
 if (-not $Apply) { Show-StorageAudit $data }
 
 if (-not $Apply) {
@@ -439,7 +436,7 @@ if ($failed.Count) {
     $failed | ForEach-Object { Write-Host ('  - ' + $_.Rel + ' : ' + $_.Error) -ForegroundColor Yellow }
     Write-Host '提示：完全退出 Edge 后重跑一次即可。' -ForegroundColor Yellow
 }
-Show-Composition $compAfter '清理后剩余构成（Top 5，这些是故意不动的）'
+Show-Composition $compAfter '清理后剩余构成（Top 5，受保护项不清理）'
 Show-StorageAudit $data
 Write-Host ''
 Write-Host '重启 Edge 生效（缓存会随使用慢慢重建，属正常）。' -ForegroundColor DarkGray

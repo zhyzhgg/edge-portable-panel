@@ -7,7 +7,7 @@
   "ConfigureOnPremisesAccountAutoSignIn": { "what": "用公司域账号自动登录 Edge", "effect": "禁止自动登录", "advice": "建议勾选：家用电脑没有域账号，纯多余项" },
   "GuidedSwitchEnabled": { "what": "个人/工作两种配置切换时顶部的提示条", "effect": "不再提示", "advice": "建议勾选：少一条横幅" },
   "ImplicitSignInEnabled": { "what": "打开 Edge 就用 Windows 账户悄悄登录微软账号", "effect": "禁止自动登录，你需要手动点「登录」", "advice": "看你的习惯：想省事就取消勾选；在意隐私就勾上，代价是每次要手动登录一次" },
-  "ImportBrowserSettings": { "what": "从 Chrome 等其它浏览器导入设置", "effect": "禁止导入", "advice": "建议勾选：你只用这个便携版，没有要导入的来源" },
+  "ImportBrowserSettings": { "what": "从 Chrome 等其它浏览器导入设置", "effect": "禁止导入", "advice": "建议勾选：便携版独立使用场景通常无需从其他浏览器导入" },
   "ImportOnEachLaunch": { "what": "每次启动都提示导入浏览数据", "effect": "不再提示", "advice": "建议勾选：纯打扰" },
   "MSAWebSiteSSOUsingThisProfileAllowed": { "what": "登录过微软账号后，微软系网站免登录", "effect": "禁止免登录，每个站要重新确认", "advice": "建议勾选：减少跨站身份共享；嫌每次要确认太麻烦可取消" },
   "ProactiveAuthWorkflowEnabled": { "what": "带着你的登录身份自动去访问 MSN/Bing/Copilot", "effect": "不再自动验证", "advice": "建议勾选：少一层后台请求" },
@@ -22,20 +22,20 @@
   "EdgeWalletEtreeEnabled": { "what": "Edge 钱包 E-Tree 附属功能（已弃用）", "effect": "关闭", "advice": "建议勾选：已弃用功能" },
   "PasswordDismissCompromisedAlertEnabled": { "what": "是否允许你点掉「这个密码已泄露」的提示", "effect": "不允许点掉，警告会一直挂着", "advice": "不建议勾选：警告关不掉很烦，而且它本来是有用的提醒" },
   "PasswordGeneratorEnabled": { "what": "注册时自动建议强密码", "effect": "不再建议", "advice": "看你的用法：用不到密码生成器就勾；常用它生成密码就别勾" },
-  "PasswordManagerEnabled": { "what": "Edge 内置密码保存与自动填充", "effect": "关闭，已存的密码不再自动填、也不能再保存新密码", "advice": "不建议勾选：你有 200+ 条密码存在 Edge 里，勾了等于废掉一键登录" },
+  "PasswordManagerEnabled": { "what": "Edge 内置密码保存与自动填充", "effect": "关闭，已存的密码不再自动填、也不能再保存新密码", "advice": "不建议勾选：若使用 Edge 内置密码管理，勾选后会停用自动填充与保存；仅在使用第三方密码管理器时勾选" },
   "PasswordMonitorAllowed": { "what": "密码泄露监视（你的密码出现在泄露库里时提醒）", "effect": "关闭监视", "advice": "不建议勾选：这是保护你的功能，留着不打扰" },
   "PasswordProtectionWarningTrigger": { "what": "在网页里输入已泄露的密码时弹警告", "effect": "不再警告", "advice": "不建议勾选：安全提示，留着有用" },
   "PaymentMethodQueryEnabled": { "what": "网站能否查询你保存了哪些支付方式", "effect": "禁止查询", "advice": "建议勾选：减少信息暴露面" },
   "WalletDonationEnabled": { "what": "钱包里的捐款入口（已弃用）", "effect": "关闭", "advice": "建议勾选：推广位" },
 
-  "ClearCachedImagesAndFilesOnExit": { "what": "退出 Edge 时自动清掉缓存的图片和文件", "effect": "每次退出清一遍，下次首次打开略慢，但省空间", "advice": "建议勾选：和你那个「清理缓存.cmd」目标一致，省得手动跑" },
+  "ClearCachedImagesAndFilesOnExit": { "what": "退出 Edge 时自动清掉缓存的图片和文件", "effect": "每次退出清一遍，下次首次打开略慢，但省空间", "advice": "建议勾选：与面板「清理缓存」互补，退出浏览器时自动释放常规缓存" },
   "AddressBarTrendingSuggestEnabled": { "what": "地址栏下拉里显示必应热搜", "effect": "不再显示", "advice": "建议勾选：纯推广" },
   "AddressBarWorkSearchResultsEnabled": { "what": "地址栏下拉里显示工作相关内容", "effect": "不再显示", "advice": "建议勾选：个人机用不上" },
   "AdsTransparencyEnabled": { "what": "跟踪防护面板里的「广告透明度」信息", "effect": "该面板关闭", "advice": "建议勾选：没人看的面板" },
   "AlternateErrorPagesEnabled": { "what": "网页打不开时跳到必应建议页", "effect": "只显示本地错误页，不联网", "advice": "建议勾选：少一次跳转和请求" },
   "BingAdsSuppression": { "what": "必应搜索结果里的广告链接", "effect": "屏蔽掉", "advice": "建议勾选：搜索结果更干净" },
   "BlockThirdPartyCookies": { "what": "阻止第三方 Cookie（别的站点嵌在当前页面里的 Cookie）", "effect": "阻止；个别网站登录、评论框、嵌入播放器可能失效", "advice": "建议勾选；如果某个站登不上/评论发不出，先取消这条再试" },
-  "BuiltInDnsClientEnabled": { "what": "浏览器自带的 DNS 解析器（DoH 加密解析走的就是它）", "effect": "勾选=禁用内置解析器，所有域名都交给系统 DNS（你现在系统里配的是阿里 223.5.5.5）", "advice": "建议勾选：你不常开 Clash，交给系统 DNS 最省事；注意一旦勾上，DoH 那项就永远不会生效（DoH 必须靠内置解析器）" },
+  "BuiltInDnsClientEnabled": { "what": "浏览器自带的 DNS 解析器（DoH 加密解析走的就是它）", "effect": "勾选=禁用内置解析器，全部域名交由系统 DNS 解析", "advice": "建议勾选：希望直接沿用系统 DNS 时建议勾选；注意勾选后 DoH 设置将不生效（DoH 依赖内置解析器）" },
   "ConfigureDoNotTrack": { "what": "访问网站时发送「请勿跟踪」请求头", "effect": "开始发送", "advice": "可勾可不勾：几乎所有网站都忽略它，勾了不亏、也没实际效果" },
   "DefaultIdleDetectionSetting": { "what": "网页能否检测你是否离开电脑（会议「离开」状态、挂机检测）", "effect": "任何网站都不能检测", "advice": "建议勾选：少一个隐私面；网页会议里的「离开」提示也不会误报" },
   "DiagnosticData": { "what": "向微软上报诊断数据（必需+可选）", "effect": "全部不上报", "advice": "建议勾选：纯隐私收益" },
@@ -53,7 +53,7 @@
   "SearchFiltersEnabled": { "what": "搜索建议里的筛选器", "effect": "关闭筛选器", "advice": "建议勾选：少一层建议干扰" },
   "SearchForImageEnabled": { "what": "右键菜单里的「以图搜图」", "effect": "移除该菜单项", "advice": "看你习惯：不用就勾，常用就别勾" },
   "ShowPDFDefaultRecommendationsEnabled": { "what": "推荐把 Edge 设为 PDF 默认打开程序", "effect": "不再推荐", "advice": "建议勾选：少一个弹窗" },
-  "SmartScreenDnsRequestsEnabled": { "what": "SmartScreen 为判断网址安全而发的 DNS 查询", "effect": "不再发，少一批后台请求，但拦截能力变弱", "advice": "可勾可不勾：你已经把 SmartScreen 关了，这条影响很小；想少点请求就勾" },
+  "SmartScreenDnsRequestsEnabled": { "what": "SmartScreen 为判断网址安全而发的 DNS 查询", "effect": "不再发，少一批后台请求，但拦截能力变弱", "advice": "可按需勾选：若已在设置中关闭 SmartScreen，影响较小；需要减少后台 DNS 请求时可勾" },
   "SpeechRecognitionEnabled": { "what": "网页语音识别（网页版语音输入、语音搜索）", "effect": "禁止网页使用麦克风识别", "advice": "看你的用法：要用网页语音输入就别勾" },
   "SpotlightExperiencesAndRecommendationsEnabled": { "what": "Windows 聚焦壁纸与推荐内容", "effect": "关闭", "advice": "建议勾选：纯推广" },
   "TyposquattingCheckerEnabled": { "what": "仿冒域名检查（防止输错一个字母进了钓鱼站）", "effect": "关闭检查", "advice": "不建议勾选：这是防钓鱼的，关掉更危险" },
@@ -72,7 +72,7 @@
   "EdgeEntraCopilotPageContext": { "what": "企业版（Entra）Copilot 读取页面内容", "effect": "禁止", "advice": "建议勾选：家用不触发，勾了无副作用" },
   "EdgeEntraCopilotPageContextIncludesHistory": { "what": "企业 Copilot 的上下文是否包含浏览历史", "effect": "排除历史", "advice": "建议勾选：家用不触发" },
   "EdgeHistoryAISearchEnabled": { "what": "历史记录页里的 AI 搜索", "effect": "关闭", "advice": "建议勾选" },
-  "GenAILocalFoundationalModelSettings": { "what": "把生成式 AI 的基础模型下载到本地", "effect": "不下载（省约 20 MB，也少一个后台任务）", "advice": "建议勾选：你不用 AI，这条能实打实省空间" },
+  "GenAILocalFoundationalModelSettings": { "what": "把生成式 AI 的基础模型下载到本地", "effect": "不下载（省约 20 MB，也少一个后台任务）", "advice": "不用内置本地 AI 功能时建议勾选，可减少约 20 MB 磁盘占用与后台任务" },
   "M365LinksAutoOpenCopilotEnabled": { "what": "点 Office/M365 链接时自动打开 Copilot", "effect": "不自动打开", "advice": "建议勾选" },
   "Microsoft365CopilotChatIconEnabled": { "what": "工具栏上的 M365 Copilot 图标", "effect": "隐藏", "advice": "建议勾选：纯推广位" },
   "ShareBrowsingHistoryWithCopilotSearchAllowed": { "what": "把你的浏览历史共享给 Copilot 搜索", "effect": "不共享", "advice": "建议勾选：隐私" },
@@ -86,12 +86,12 @@
   "PersonalizeTopSitesInCustomizeSidebarEnabled": { "what": "边栏里按你的习惯推荐常用网站", "effect": "关闭个性化", "advice": "建议勾选" },
   "PinBrowserEssentialsToolbarButton": { "what": "工具栏上固定的「Essentials」按钮", "effect": "取消固定", "advice": "建议勾选：工具栏更干净" },
   "QRCodeGeneratorEnabled": { "what": "右键「为此页面创建二维码」", "effect": "移除该菜单项", "advice": "看你的用法：偶尔要手机扫电脑页面就留着，用不到就勾" },
-  "SearchInSidebarEnabled": { "what": "在侧边栏里打开搜索结果（含 PWA 的侧栏搜索）", "effect": "禁用，改成普通搜索结果页", "advice": "建议勾选：你已关边栏，这条让搜索不再往侧栏跑" },
+  "SearchInSidebarEnabled": { "what": "在侧边栏里打开搜索结果（含 PWA 的侧栏搜索）", "effect": "禁用，改成普通搜索结果页", "advice": "不使用侧边栏时建议勾选，避免搜索结果跳进侧边栏" },
   "ShowDownloadsToolbarButton": { "what": "工具栏上是否「常显」下载按钮", "effect": "勾选=一直显示（不是隐藏）", "advice": "看你习惯：想让下载按钮常驻就勾；想省工具栏空间就别勾" },
   "ShowHomeButton": { "what": "工具栏上的主页按钮", "effect": "勾选=隐藏它", "advice": "看你习惯：不用主页按钮就勾" },
   "ShowOfficeShortcutInFavoritesBar": { "what": "收藏夹栏里的 Office 网页版快捷方式（已弃用）", "effect": "不显示", "advice": "建议勾选：已弃用的推广位" },
   "StandaloneHubsSidebarEnabled": { "what": "可独立打开的侧边栏窗口", "effect": "禁用", "advice": "建议勾选" },
-  "WebCaptureEnabled": { "what": "网页捕获（整页截图、网页标注）", "effect": "关闭，长截图会失效", "advice": "不建议勾选：你上次长截图坏掉就是它造成的" },
+  "WebCaptureEnabled": { "what": "网页捕获（整页截图、网页标注）", "effect": "关闭，长截图会失效", "advice": "不建议勾选：关闭后内置整页截图与标注功能会失效" },
 
   "DefaultBrowserSettingEnabled": { "what": "启动时检查 Edge 是否为默认浏览器并提示", "effect": "不再检查", "advice": "建议勾选：少一个弹窗" },
   "DefaultBrowserSettingsCampaignEnabled": { "what": "劝你把 Edge 设为默认浏览器的推广", "effect": "关闭", "advice": "建议勾选：纯推广" },
@@ -120,17 +120,17 @@
   "ReadAloudEnabled": { "what": "大声朗读网页", "effect": "关闭", "advice": "看你用不用；不用就勾" },
 
   "AskBeforeCloseEnabled": { "what": "一次关掉多个标签的窗口前弹确认", "effect": "勾选=不弹，直接关", "advice": "不建议勾选：误按关闭会一次丢掉所有标签" },
-  "BackgroundModeEnabled": { "what": "关掉窗口后 Edge 仍在后台常驻（收通知、后台任务）", "effect": "不再常驻，进程真正退出", "advice": "建议勾选：省内存，和你的清理缓存脚本配合更好" },
+  "BackgroundModeEnabled": { "what": "关掉窗口后 Edge 仍在后台常驻（收通知、后台任务）", "effect": "不再常驻，进程真正退出", "advice": "建议勾选：退出后彻底结束后台进程，更省内存且方便清理与备份" },
   "EfficiencyModeEnabled": { "what": "效率模式（降低后台标签的 CPU / 省电）", "effect": "注意：勾选写入 0 = 彻底关闭效率模式", "advice": "不建议勾选：插电时默认关闭、用电池时默认开启，让它自己判断更省电" },
   "ExtensionsPerformanceDetectorEnabled": { "what": "扩展占用过高时的提示", "effect": "不再提示", "advice": "看你嫌不嫌它提示；嫌烦就勾" },
   "HardwareAccelerationModeEnabled": { "what": "硬件加速（用显卡渲染页面和视频）", "effect": "勾选=开启；取消则退回 CPU 软渲染", "advice": "建议勾选：关掉会更卡、更耗电（例外：显卡驱动有花屏问题时才关）" },
   "HighEfficiencyModeEnabled": { "what": "效率模式的旧策略名（同一功能）", "effect": "勾选写入 0 = 关闭效率模式", "advice": "不建议勾选：同上，让它按电池状态自动决定" },
   "NetworkPredictionOptions": { "what": "预连接/预解析（提前连你可能要点的链接）", "effect": "勾选写入 2 = 永不预测，省流量但首屏更慢", "advice": "看你更在意哪个：流量紧张就勾，嫌打开慢就取消" },
   "PerformanceDetectorEnabled": { "what": "标签页性能提示（哪个标签吃资源，已弃用）", "effect": "不再提示", "advice": "可勾可不勾：功能已弃用" },
-  "StartupBoostEnabled": { "what": "启动加速（开机就偷偷跑一个 Edge 进程预热）", "effect": "关闭，少一个常驻进程", "advice": "建议勾选：省内存；你常用完就关，预热没意义" },
+  "StartupBoostEnabled": { "what": "启动加速（开机就偷偷跑一个 Edge 进程预热）", "effect": "关闭，少一个常驻进程", "advice": "建议勾选：关闭开机后台预热，减少常驻内存占用" },
   "TabServicesEnabled": { "what": "标签页整理与推荐服务", "effect": "关闭", "advice": "建议勾选" },
 
-  "ExtensionManifestV2Availability": { "what": "是否允许 Manifest V2 老式扩展运行（0=跟随浏览器默认，1=禁止，2=允许）", "effect": "勾选写入 2 = 允许 MV2 扩展", "advice": "必须勾选：你的 uBlock Origin 是 MV2，改成 1 会直接禁用它" },
+  "ExtensionManifestV2Availability": { "what": "是否允许 Manifest V2 老式扩展运行（0=跟随浏览器默认，1=禁止，2=允许）", "effect": "勾选写入 2 = 允许 MV2 扩展", "advice": "若安装了 Manifest V2 扩展（如旧版 uBlock Origin），建议勾选以保持兼容" },
 
   "AllowGamesMenu": { "what": "Edge 的游戏菜单入口（已弃用）", "effect": "隐藏", "advice": "可勾可不勾：已弃用，勾了也没副作用" },
   "ApplicationBoundEncryptionEnabled": { "what": "应用绑定加密 ABE：把 Cookie/密码的加密密钥绑死到浏览器本体", "effect": "勾选=关闭 ABE，密钥不再绑定本机；profile 才能跨机/跨目录搬，代价是别的程序更容易取到密钥", "advice": "建议勾选：这正是便携版能搬来搬去的前提；代价是安全等级下降（微软文档明说会削弱防护）" },
@@ -152,19 +152,19 @@
   "SplitScreenEnabled": { "what": "分屏浏览（两个页面左右并排）", "effect": "关闭", "advice": "看你用不用：分屏其实挺顺手，不用再勾" },
   "UploadFromPhoneEnabled": { "what": "从手机往电脑上传文件", "effect": "关闭", "advice": "看你用不用；不用就勾" },
   "UserFeedbackAllowed": { "what": "「发送反馈」入口", "effect": "隐藏", "advice": "建议勾选" },
-  "WebRtcLocalhostIpHandling": { "what": "WebRTC 的音视频数据能否绕过代理直连对方 IP", "effect": "只允许走代理的通道，直连被禁；网页会议/语音可能连不上，但不会泄露你的真实 IP", "advice": "看情况：你 Clash 平时关着，关着时网页本来就是直连，这勾不勾都不影响开会；只有开代理时勾上才有「不泄露真实 IP」的意义。想两边都要，得开 Clash 的 TUN 模式" },
+  "WebRtcLocalhostIpHandling": { "what": "WebRTC 的音视频数据能否绕过代理直连对方 IP", "effect": "只允许走代理的通道，直连被禁；网页会议/语音可能连不上，但不会泄露你的真实 IP", "advice": "按需选择：使用代理且希望防止 WebRTC 泄露真实 IP 时勾选；注意可能导致部分网页音视频通话连不上" },
   "WebWidgetAllowed": { "what": "Web 小组件（桌面小卡片，已弃用）", "effect": "禁用", "advice": "建议勾选：已弃用" },
   "WhatsNewPageForEntraProfilesEnabled": { "what": "企业配置的「新增功能」页", "effect": "禁用", "advice": "建议勾选：家用不触发" },
 
   "_specials": {
     "屏蔽默认新标签页 (URLBlocklist)": "【功能】把 ntp.msn.com 加进网址拦截列表\n【勾选后】新标签页不再加载 MSN 内容（空白页或本地新标签页）\n【建议】建议勾选：这条比单关资讯流更彻底，配合 NewTabPageContentEnabled 一起用",
     "安装极简新标签页扩展": "【功能】强制安装作者指定的新标签页扩展（khdn…）\n【勾选后】这个扩展会被强制装回，你手动卸载也会回来\n【建议】不建议勾选：等于把扩展控制权交出去；想要干净新标签页，用上面那条 URLBlocklist 更安全",
-    "允许保存 Google Cookie": "【功能】允许 google.com 的 Cookie 持久保存\n【勾选后】登录 Google 系服务（含 Gemini）不会频繁掉登录\n【建议】建议勾选：你常用 Gemini，勾上省得反复登录"
+    "允许保存 Google Cookie": "【功能】允许 google.com 的 Cookie 持久保存\n【勾选后】登录 Google 系服务（含 Gemini）不会频繁掉登录\n【建议】使用 Google 系网页服务时建议勾选，减少反复登录"
   },
 
   "_custom": {
     "TrackingPrevention": "【功能】跟踪防护等级：拦截跨站跟踪器\n【勾选后】按右侧下拉框的等级生效（基本 1 / 平衡 2 / 严格 3）\n【建议】建议勾选并保持「平衡 (2)」；选严格会让部分站点登录、嵌入内容异常，选关闭则完全不拦",
     "SleepingTabsTimeout": "【功能】标签页闲置多久后进入「睡眠」以释放内存\n【勾选后】按右侧下拉框的时间生效（推荐 15 分钟）\n【建议】建议勾选 15 分钟；但如果常挂后台的音乐、会议、下载页面，睡过去会中断，可改 30 分钟或 1 小时",
-    "DnsOverHttpsMode": "【功能】用加密 DNS（DoH）替代明文 DNS\n【勾选后】按下方模板走加密解析\n【建议】建议不勾：你 Clash 平时关着，而这里给的模板全是国外或作者自建（Cloudflare／Google／OpenDNS），国内直连大概率解析失败。真想加密 DNS：选「自定义模板 URL」填 https://dns.alidns.com/dns-query（阿里）或 https://doh.pub/dns-query（腾讯），并且必须取消勾选 BuiltInDnsClientEnabled，否则 DoH 不生效"
+    "DnsOverHttpsMode": "【功能】用加密 DNS（DoH）替代明文 DNS\n【勾选后】按下方模板走加密解析\n【建议】默认建议不勾：内置预设多为境外 DoH 节点，直连环境可能解析失败；如需开启，可选自定义模板填写本地可达的 DoH 地址，并取消勾选 BuiltInDnsClientEnabled"
   }
 }

@@ -56,8 +56,9 @@ try {
         $b0 = @()
         foreach ($e in $rawB) { $b0 += $e }
         $script:baseline = $b0            # F3 策略漂移体检逐条比对用
-        $script:baselineCount = @($b0 | Where-Object { -not $_.sub }).Count
-        $script:baselineSubCount = @($b0 | Where-Object { $_.sub }).Count
+        $activeB0 = Get-ActiveBaselineRecords $b0
+        $script:baselineCount = @($activeB0 | Where-Object { -not $_.sub }).Count
+        $script:baselineSubCount = @($activeB0 | Where-Object { $_.sub }).Count
     }
 } catch { $script:baselineLoadError = $_.Exception.Message }
 $pkgRoot = Find-PackageRoot $exeDir
@@ -530,8 +531,7 @@ $header.BackColor = $clrHeader
 $header.Add_Paint({
     param($s, $e)
     $pen = New-Object System.Drawing.Pen($clrHeaderLine, 1)
-    $e.Graphics.DrawLine($pen, 0, ($s.Height - 1), $s.Width, ($s.Height - 1))
-    $pen.Dispose()
+    try { $e.Graphics.DrawLine($pen, 0, ($s.Height - 1), $s.Width, ($s.Height - 1)) } finally { $pen.Dispose() }
 })
 $form.Controls.Add($header)
 
@@ -765,11 +765,11 @@ function New-Note($parent, [int]$x, [int]$y, [int]$w, [int]$h, [string]$text) {
 
 # 统一 12px 模块间距网格（外边距 14px，左右卡各 415px，中缝 12px，内宽 387px）
 $gSlim = New-Group 14 168 415 160 '程序瘦身'
-$script:btnSlimAll  = New-Btn $gSlim 14  38 387 28 '一键瘦身（删无用组件 + 关自动更新）' { Invoke-Action 'SlimAll' }
+$script:btnSlimAll  = New-Btn $gSlim 14  38 387 28 '一键瘦身' { Invoke-Action 'SlimAll' }
 $script:btnSlimOnly = New-Btn $gSlim 14  74 123 28 '仅删组件' { Invoke-Action 'SlimOnly' }
 $script:btnIniOff   = New-Btn $gSlim 146 74 123 28 '关闭组件更新' { Invoke-Action 'IniOff' }
 $script:btnIniOn    = New-Btn $gSlim 278 74 123 28 '恢复组件更新' { Invoke-Action 'IniOn' }
-[void](New-Note $gSlim 14 108 387 44 '移除多余语言包（保留中/英）、Copilot 外壳、遥测与通知组件（约 380 项），核心运行文件一律保留。')
+[void](New-Note $gSlim 14 108 387 44 '移除约 380 项非核心组件（保留中/英语言包）、关闭组件更新并启用多线程下载，核心文件不动。')
 
 $gUpdate = New-Group 441 168 415 160 'Edge 更新'
 $valCurVer = New-Object System.Windows.Forms.Label
@@ -797,7 +797,7 @@ $script:btnUpdate     = New-Btn $gUpdate 146 84 123 28 '下载并更新' { Invok
 $script:btnUpdateSlim = New-Btn $gUpdate 278 84 123 28 '更新并瘦身' { Invoke-UpdateNow $true } $false
 $script:btnUpdate.Enabled = $false
 $script:btnUpdateSlim.Enabled = $false
-[void](New-Note $gUpdate 14 118 387 34 '可仅更新程序文件，或更新后自动瘦身；chrome++.ini 等便携配置始终保留。')
+[void](New-Note $gUpdate 14 118 387 34 '可仅更新 Edge 本体，或更新后自动瘦身；chrome++.ini 等便携配置始终保留。')
 
 $gCache = New-Group 14 340 415 120 '缓存与备份'
 $script:btnClean   = New-Btn $gCache 14  38 123 30 '清理缓存' { Invoke-Action 'Clean' }
@@ -820,8 +820,8 @@ $valPolicy.TextAlign = 'MiddleRight'
 $gPolicy.Controls.Add($valPolicy)
 $script:btnPolicy   = New-Btn $gPolicy 14  38 189 30 '打开策略管理' { Open-PolicyGui }
 $script:btnRecom    = New-Btn $gPolicy 212 38 189 30 '应用推荐策略' { Apply-RecommendedPolicies } $true
-$script:btnDefApps  = New-Btn $gPolicy 14  76 189 30 '设为默认浏览器' { Start-EdgeBat 'default-apps-multi-profile.bat' '设为默认浏览器' }
-$script:btnDefender = New-Btn $gPolicy 212 76 189 30 '加入 Defender 排除' { Start-EdgeBat 'bypass_windows_defender.bat' 'Defender 排除' }
+$script:btnDefApps  = New-Btn $gPolicy 14  76 189 30 '设默认浏览器' { Start-EdgeBat 'default-apps-multi-profile.bat' '设默认浏览器' }
+$script:btnDefender = New-Btn $gPolicy 212 76 189 30 'Defender 排除' { Start-EdgeBat 'bypass_windows_defender.bat' 'Defender 排除' }
 # 顶栏右侧：「更新面板」（预设，有新版绿/无新版灰）+「刷新状态」
 $script:btnPanelUpdate = New-Btn $header 672 19 86 30 '更新面板' { Invoke-PanelUpdate }
 Apply-FlatBtnTheme $script:btnPanelUpdate $true
@@ -844,19 +844,20 @@ $script:tip.SetToolTip($valSlim,   "瘦身还能删掉多少：文件数与体�
 $script:tip.SetToolTip($valProfile,"Data 目录下的组件目录数与总体积（不含程序文件）")
 $script:tip.SetToolTip($valDrm,    "是否已下载 WidevineCdm（DRM 组件）。没有就播不了受版权保护的视频")
 $script:tip.SetToolTip($valIni,    "chrome++.ini 的 command_line 里是否带 --disable-component-update")
-$script:tip.SetToolTip($valCache,  "常规清理能释放的量（大头在包根 Cache\，另有 GPU/着色器缓存、诊断指标包等）")
-$script:tip.SetToolTip($script:btnBackup, "清理缓存并备份用户数据（可选加密、保留份数、保存位置）")
-$script:tip.SetToolTip($script:btnRestore, "从备份包恢复用户数据；完整包还能把 Edge 程序一起铺回来")
+$script:tip.SetToolTip($script:btnSlimAll, "删除约 380 项非核心组件、关闭组件更新并启用多线程下载，核心运行文件一律保留")
+$script:tip.SetToolTip($valCache,  "常规清理预计可释放体积（含包根目录 Cache\、GPU/着色器缓存、诊断指标与崩溃转储等）")
+$script:tip.SetToolTip($script:btnBackup, "清理缓存并备份用户数据（支持加密、保留份数与目录设置，可选附带面板本体或 Edge 本体）")
+$script:tip.SetToolTip($script:btnRestore, "从备份包恢复用户数据；含 Edge 本体的完整包可一并恢复程序目录")
 $script:tip.SetToolTip($lnkRepo, "打开 GitHub 项目主页")
-$script:tip.SetToolTip($lnkIssues, "打开 GitHub Issues 问题列表页（可先查看已有问题，避免重复提交）")
-$script:tip.SetToolTip($script:btnPanelUpdate, "检查并更新面板程序本身（有新版变绿，走国内镜像站下载并校验 SHA256）")
-$script:tip.SetToolTip($script:btnRefresh, "刷新上方全部状态卡与可清理量")
-$script:tip.SetToolTip($script:btnUpdate,     "只替换程序文件（保留 chrome++.ini 等配置），不动语言包和组件")
-$script:tip.SetToolTip($script:btnUpdateSlim, "替换完自动删约 380 项无用文件并关闭组件更新，等于更新 + 全套瘦身")
-$script:tip.SetToolTip($script:btnPolicy,     "打开 Edge 策略管理界面（已汉化并自动适配深色模式，可逐条查看或微调）")
-$script:tip.SetToolTip($script:btnDefApps,    "调用包里的 default-apps-multi-profile.bat：注册到 HKLM（会弹 UAC），完成后自动打开系统「默认应用」页")
-$script:tip.SetToolTip($script:btnDefender,   "调用包里的 bypass_windows_defender.bat：交互菜单，只排除 Edge 子目录，不含 Data / Cache")
-$script:tip.SetToolTip($script:btnRecom,   ('把面板内嵌的 ' + $script:baselineCount + ' 条推荐策略（另含 ' + $script:baselineSubCount + ' 条子键项）写入注册表（会弹一次 UAC），同步推荐项并保留其它自定义项'))
+$script:tip.SetToolTip($lnkIssues, "打开 GitHub Issues 问题列表（可先查看已有记录，避免重复提交）")
+$script:tip.SetToolTip($script:btnPanelUpdate, "检查并更新面板本体（有新版变绿，支持直连与镜像站下载并校验 SHA256）")
+$script:tip.SetToolTip($script:btnRefresh, "刷新上方全部状态卡与可清理体积")
+$script:tip.SetToolTip($script:btnUpdate,     "仅替换 Edge 本体文件（保留 chrome++.ini 等便携配置），不删语言包与组件")
+$script:tip.SetToolTip($script:btnUpdateSlim, "替换 Edge 本体后自动执行一键瘦身（删非核心组件 + 关组件更新 + 开多线程下载）")
+$script:tip.SetToolTip($script:btnPolicy,     "打开 Edge 策略管理界面（已汉化并适配深浅色模式，可逐条查看或微调）")
+$script:tip.SetToolTip($script:btnDefApps,    "调用 default-apps-multi-profile.bat 注册到 HKLM（需 UAC），完成后自动打开系统「默认应用」")
+$script:tip.SetToolTip($script:btnDefender,   "调用 bypass_windows_defender.bat，将 Edge 子目录加入 Defender 排除项（不含 Data / Cache）")
+$script:tip.SetToolTip($script:btnRecom,   ('将内置 ' + $script:baselineCount + ' 条主策略与 ' + $script:baselineSubCount + ' 条子键项写入隔离注册表键（需 UAC），同步推荐项并保留其它自定义项'))
 
 
 # ---------------- F4：把「注册表有、基线没有」的条目复制成 JSON（替代"并入基线"按钮，零布局） ----------------
@@ -966,6 +967,29 @@ function End-LogBlock {
 
 # 队列在这里初始化：$log 已创建（883 行），且之后的日志都走队列
 Initialize-LogPump
+
+function Write-CleanerOutput([object[]]$lines) {
+    # 界面只留重点（前后体积/释放量/构成 Top5/扩展与站点下钻/逐项结果）；计划清单等明细走 -Det 仅写磁盘日志
+    Start-LogBlock
+    try {
+        $inSection = $false
+        foreach ($line in @($lines)) {
+            $s = [string]$line
+            if ([string]::IsNullOrWhiteSpace($s)) { $inSection = $false; continue }
+            $s = $s -replace '^\s+', ''
+            if ($s -match '^(当前剩余构成|清理后剩余构成|扩展占用 Top|站点数据 Top)') {
+                Write-Log $s; $inSection = $true; continue
+            }
+            if ($inSection -and $s -match '^\d') { Write-Log $s; continue }
+            if ($s -match '^(清理前|清理后|实际释放|预计可释放|差额核对|（想减少占用|（附带说明|\[OK\]|\[跳过\]|失败项|重启 Edge)') {
+                $inSection = $false
+                Write-Log $s
+            } else {
+                Write-Log $s 'info' -Det
+            }
+        }
+    } finally { End-LogBlock }
+}
 
 function Write-Log([string]$text, [string]$level = 'info', [switch]$Det) {
     $t = (Get-Date).ToString('HH:mm:ss')
@@ -1569,7 +1593,7 @@ function Test-StructureDrift([string]$edgeDir, [string]$scope = '') {
     if ($removed.Count -gt 5) { Write-Log ('  …另有 ' + ($removed.Count - 5) + ' 个消失条目') $lvl }
     foreach ($c in @($changed | Select-Object -First 5)) { Write-Log ('  ~ ' + $c.p + '  ' + $c.mb + ' MB') $lvl }
     if (@($added | Where-Object { $_.p -like '*msedge_renderer.dll' }).Count -gt 0) {
-        Write-Log '上游包里有 msedge_renderer.dll（你已删除它；若更新后它又出现，用「全套瘦身」再删一次）' 'warn'
+        Write-Log '上游包里有 msedge_renderer.dll（你已删除它；若更新后它又出现，用「一键瘦身」再删一次）' 'warn'
     }
     return $new   # 有变化时也要把新快照交给调用方落盘，否则永远拿旧基线重复报警
 }
@@ -2189,7 +2213,7 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $chkLblPanel.Size = New-Object System.Drawing.Size(($inner - (S 26)), (S 26))
     $chkLblPanel.TextAlign = 'MiddleLeft'
     $chkLblPanel.ForeColor = $clrText
-    $chkLblPanel.Text = '同时打包面板本体（约 +1 MB，换机解压双击即可就地拉取 Edge）'
+    $chkLblPanel.Text = '同时打包面板本体（约 +1 MB，换机解压双击即可部署 Edge）'
     $chkLblPanel.Location = New-Object System.Drawing.Point(($pad + (S 22)), $panelY)
     $chkLblPanel.Add_Click({ $chkPanel.Checked = -not $chkPanel.Checked })
     $dlg.Controls.Add($chkLblPanel)
@@ -2209,7 +2233,7 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $chkLblFull.Size = New-Object System.Drawing.Size(($inner - (S 26)), (S 26))
     $chkLblFull.TextAlign = 'MiddleLeft'
     $chkLblFull.ForeColor = $clrText
-    $chkLblFull.Text = '同时打包浏览器本体（约 +218 MB，用于换机/重装）'
+    $chkLblFull.Text = '同时打包 Edge 本体（约 +218 MB，适合离线换机或重装）'
     $chkLblFull.Location = New-Object System.Drawing.Point(($pad + (S 22)), $fullY)
     $chkLblFull.Add_Click({ $chkFull.Checked = -not $chkFull.Checked })
     $dlg.Controls.Add($chkLblFull)
@@ -2486,25 +2510,7 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
         # 3) 常规清理
         Write-Log '步骤 1/3：常规清理缓存…'
         $rc = Invoke-Ps $cleaner @('-Apply', '-Quiet', '-Root', $pkgRoot)
-        # 界面只留重点：前后体积/释放量/Top 构成/扩展与站点下钻/逐项结果；计划清单等明细只进日志文件
-        Start-LogBlock
-        $inSection = $false     # 处在"构成/Top"表里：表头下面那些「数字 MB 名字」行要留在界面上
-        foreach ($line in $rc.Output) {
-            $s = [string]$line
-            if ([string]::IsNullOrWhiteSpace($s)) { $inSection = $false; continue }
-            $s = $s -replace '^\s+', ''
-            if ($s -match '^(当前剩余构成|清理后剩余构成|扩展占用 Top|站点数据 Top)') {
-                Write-Log $s; $inSection = $true; continue
-            }
-            if ($inSection -and $s -match '^\d') { Write-Log $s; continue }
-            if ($s -match '^(清理前|清理后|实际释放|预计可释放|差额核对|（想减少占用|（附带说明|\[OK\]|\[跳过\]|失败项|重启 Edge)') {
-                $inSection = $false
-                Write-Log $s
-            } else {
-                Write-Log $s 'info' -Det
-            }
-        }
-        End-LogBlock
+        Write-CleanerOutput $rc.Output
         if ($rc.Code -ne 0) { Write-Log ('清理返回码 ' + $rc.Code + '，继续备份') 'warn' }
 
 
@@ -3013,7 +3019,7 @@ function Invoke-Action([string]$kind) {
     }
     # 动作 → 脚本/参数/起始日志的唯一映射：首次执行与重试共用（原来 switch 写了两遍）
     $map = @{
-        'SlimAll'  = @{ Script = $edgeTune; Args = @('-Action', 'SlimAll', '-Quiet', '-Root', $pkgRoot);  Log = '开始全套瘦身（删文件 + 关闭组件更新）…' }
+        'SlimAll'  = @{ Script = $edgeTune; Args = @('-Action', 'SlimAll', '-Quiet', '-Root', $pkgRoot);  Log = '开始一键瘦身（删文件 + 关闭组件更新）…' }
         'SlimOnly' = @{ Script = $edgeTune; Args = @('-Action', 'SlimOnly', '-Quiet', '-Root', $pkgRoot); Log = '开始删除无用文件…' }
         'IniOff'   = @{ Script = $edgeTune; Args = @('-Action', 'IniOff', '-Quiet', '-Root', $pkgRoot);   Log = '关闭组件更新…' }
         'IniOn'    = @{ Script = $edgeTune; Args = @('-Action', 'IniOn', '-Quiet', '-Root', $pkgRoot);    Log = '恢复组件更新…' }
@@ -3025,9 +3031,12 @@ function Invoke-Action([string]$kind) {
     try {
         Write-Log $job.Log
         $r = Invoke-Ps $job.Script $job.Args
-        foreach ($line in $r.Output) {
-            $s = [string]$line
-            if (-not [string]::IsNullOrWhiteSpace($s)) { Write-Log ($s -replace '^\s+', '') }
+        if ($kind -eq 'Clean') { Write-CleanerOutput $r.Output }
+        else {
+            foreach ($line in $r.Output) {
+                $s = [string]$line
+                if (-not [string]::IsNullOrWhiteSpace($s)) { Write-Log ($s -replace '^\s+', '') }
+            }
         }
         if ($r.Code -eq 0) {
             Write-Log '完成' 'ok'
@@ -3040,9 +3049,12 @@ function Invoke-Action([string]$kind) {
                 if (-not (Close-Edge)) { Write-Log 'Edge 没能完全关闭，已中止重试' 'err'; return }
                 Write-Log '重试…'
                 $r = Invoke-Ps $job.Script $job.Args
-                foreach ($line in $r.Output) {
-                    $s2 = [string]$line
-                    if (-not [string]::IsNullOrWhiteSpace($s2)) { Write-Log ($s2 -replace '^\s+', '') }
+                if ($kind -eq 'Clean') { Write-CleanerOutput $r.Output }
+                else {
+                    foreach ($line in $r.Output) {
+                        $s2 = [string]$line
+                        if (-not [string]::IsNullOrWhiteSpace($s2)) { Write-Log ($s2 -replace '^\s+', '') }
+                    }
                 }
                 if ($r.Code -eq 0) { Write-Log '完成（已重试成功）' 'ok' }
                 elseif ($r.Code -eq 2) { Write-Log '未完成：Edge 仍未完全关闭' 'warn' }
@@ -3070,8 +3082,7 @@ function Open-PolicyGui {
         $env:EP_THEME = if ($script:isDark) { 'dark' } else { 'light' }
         # 上游策略 GUI 会自己提权重启，环境变量在提权后丢失 ⇒ 再写一份跨提权可读的主题文件
         try {
-            $themeDir = Join-Path $env:LOCALAPPDATA 'EdgePanel\cache'
-            if (-not (Test-Path -LiteralPath $themeDir)) { New-Item -ItemType Directory -Path $themeDir -Force | Out-Null }
+            $themeDir = Get-RuntimeCacheDir
             [ordered]@{ theme = [string]$env:EP_THEME; updated = (Get-Date).ToString('s') } |
                 ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $themeDir 'ui-theme.json') -Encoding UTF8
         } catch { Write-Log ('主题文件写入失败（策略窗口可能跟随系统色）：' + $_.Exception.Message) 'warn' }
@@ -3453,7 +3464,7 @@ function Invoke-UpdateNow([bool]$withSlim = $false) {
     $local = Get-LocalVersion
     if ($target.version -eq $local) { Write-Log '已经是最新版本，无需更新' 'ok'; return }
     if (-not $RunOnce) {
-        $ans = $(if (Show-DialogAsk '确认更新 Edge' (("将把 Edge 本体从 " + $local + " 更新到 " + $target.version + "。" + "`r`n`r`n" + "过程：关闭本包 Edge → 下载 → 解压 → 覆盖程序文件（保留 chrome++.ini 等 2 项）→ 删除旧版本目录。" + "`r`n`r`n" + $(if ($withSlim) { "更新完成后会自动执行「全套瘦身 + 关闭组件更新」。" } else { "本次只更新程序文件，瘦身需要你另行点击。" }) + "`r`n`r`n继续吗？")) '开始更新' '取消') { 'Yes' } else { 'No' })
+        $ans = $(if (Show-DialogAsk '确认更新 Edge' (("将把 Edge 本体从 " + $local + " 更新到 " + $target.version + "。" + "`r`n`r`n" + "过程：关闭本包 Edge → 下载 → 解压 → 覆盖程序文件（保留 chrome++.ini 等 2 项）→ 删除旧版本目录。" + "`r`n`r`n" + $(if ($withSlim) { "更新完成后会自动执行「一键瘦身 + 关闭组件更新」。" } else { "本次只更新程序文件，瘦身需要你另行点击。" }) + "`r`n`r`n继续吗？")) '开始更新' '取消') { 'Yes' } else { 'No' })
         if ($ans -ne 'Yes') { Write-Log '已取消更新'; return }
     }
     Set-Busy $true '更新中…'
@@ -3595,7 +3606,7 @@ function Invoke-UpdateNow([bool]$withSlim = $false) {
             $rLoc = Join-Path (Resolve-ProgramDir $pkgRoot) 'msedge_renderer.dll'
             if ((Test-Path -LiteralPath $rNew) -and -not (Test-Path -LiteralPath $rLoc)) {
                 $rMb = [math]::Round((Get-Item -LiteralPath $rNew).Length / 1MB, 1)
-                Write-Log ('新包带 msedge_renderer.dll（' + $rMb + ' MB）——你本地是删掉的；更新完成后记得点一次「全套瘦身」再删掉它') 'warn'
+                Write-Log ('新包带 msedge_renderer.dll（' + $rMb + ' MB）——你本地是删掉的；更新完成后记得点一次「一键瘦身」再删掉它') 'warn'
             }
         } catch { }
         if ($pre.Feature.Count -gt 0) { Write-Log ('新包功能件缺 ' + $pre.Feature.Count + ' 项（不阻断）：' + ($pre.Feature -join '、')) 'warn' }
@@ -3604,7 +3615,7 @@ function Invoke-UpdateNow([bool]$withSlim = $false) {
             $dmb = [math]::Round((($dfiles | Measure-Object Length -Sum).Sum / 1MB), 2)
             Write-Log ('[演练] 压缩包内 Edge 目录：' + $dfiles.Count + ' 个文件 / ' + $dmb + ' MB；未删除、未覆盖任何东西') 'ok'
             if ($withSlim) {
-                Write-Log '[演练] 顺带验证「更新后自动瘦身」段：现在跑全套瘦身 + 关组件更新（幂等）' 'warn'
+                Write-Log '[演练] 顺带验证「更新后自动瘦身」段：现在跑一键瘦身 + 关组件更新（幂等）' 'warn'
                 $rs = Invoke-Ps $edgeTune @('-Action', 'SlimAll', '-Quiet', '-Root', $pkgRoot)
                 foreach ($line in $rs.Output) {
                     $s4 = [string]$line
@@ -3734,20 +3745,20 @@ if (-not $script:updateBackupOk -and -not $dry -and -not $RunOnce) {
         if ($new -eq $target.version) {
             Write-Log ('更新成功：' + $new) 'ok'
             if ($withSlim) {
-                Write-Log '更新完成，接着执行「全套瘦身 + 关闭组件更新」…'
+                Write-Log '更新完成，接着执行「一键瘦身 + 关闭组件更新」…'
                 $rs = Invoke-Ps $edgeTune @('-Action', 'SlimAll', '-Quiet', '-Root', $pkgRoot)
                 foreach ($line in $rs.Output) {
                     $s3 = [string]$line
                     if (-not [string]::IsNullOrWhiteSpace($s3)) { Write-Log ($s3 -replace '^\s+', '') }
                 }
                 if ($rs.Code -eq 0) { Write-Log '自动瘦身与组件更新关闭已完成' 'ok' }
-                else { Write-Log ('自动瘦身返回码 ' + $rs.Code + '：请稍后手动点「全套瘦身」') 'warn' }
+                else { Write-Log ('自动瘦身返回码 ' + $rs.Code + '：请稍后手动点「一键瘦身」') 'warn' }
             }
-            else { Write-Log '已只完成更新（未瘦身）。需要省空间请点「全套瘦身」，或用「更新并瘦身」。' 'warn' }
+            else { Write-Log '已只完成更新（未瘦身）。需要省空间请点「一键瘦身」，或用「更新并瘦身」。' 'warn' }
         }
         else {
             Write-Log ('更新可能不完整：期望 ' + $target.version + '，实际 ' + $new) 'warn'
-            Write-Log '新包会把裁掉的组件带回来，请手动点一次「全套瘦身」' 'warn'
+            Write-Log '新包会把裁掉的组件带回来，请手动点一次「一键瘦身」' 'warn'
         }
         # ---- 更新后复核（不论版本号是否对上都要跑）----
         # 必需件缺了只红字报告、不回滚：文件已就位，回滚反而丢掉刚下的新包；功能件只黄字。
