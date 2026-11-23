@@ -43,7 +43,7 @@
 [CmdletBinding()]
 param(
     [string]$Root,
-    [ValidateSet('SlimAll', 'SlimOnly', 'IniOff', 'IniOn', 'Status', 'StatusJson')]
+    [ValidateSet('SlimAll', 'SlimOnly', 'IniOff', 'IniOn', 'MetricsOff', 'MetricsOn', 'Status', 'StatusJson')]
     [string]$Action,
     [switch]$Quiet
 )
@@ -51,7 +51,8 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # 公共函数（包根定位 / 程序目录 / ini 定位）只维护一份
-. (Join-Path $PSScriptRoot '_Common.ps1')
+$scriptHome = if ($env:EP_APPDIR) { $env:EP_APPDIR } else { $PSScriptRoot }
+. (Join-Path $scriptHome '_Common.ps1')
 $flag = '--disable-component-update'
 $localesKeep = @('zh-CN.pak', 'en-US.pak')
 
@@ -164,32 +165,32 @@ function Set-ComponentUpdate([string]$ini, [bool]$disable) {
     return $true
 }
 
-function Set-IniFeature([string]$ini, [string]$feature, [bool]$enable) {
-    <#  在 command_line 的 --enable-features= 列表里加/去一个特性。
-        必须合并进同一个 --enable-features（写第二个会把前一个覆盖掉）；
-        没有这一项就追加，列表空了就把整项去掉。 #>
+function Set-IniFeature([string]$ini, [string]$feature, [bool]$enable, [string]$Switch = '--enable-features') {
+    <#  在 command_line 的 --enable-features= 或 --disable-features= 列表里加/去一个特性。
+        必须合并进同一个同名开关（写第二个会把前一个覆盖掉）；没有这一项就追加，列表空了就把整项去掉。 #>
     $s = Read-IniState $ini
     if ($s.Index -lt 0) { Say '[错误] ini 里没有 command_line 行，未改动。' 'Red'; return $false }
 
     $val = $s.Value
-    $m = [regex]::Match($val, '--enable-features=([^\s]*)')
+    $lstName = if ($Switch -eq '--disable-features') { '禁用列表' } else { '启用列表' }
+    $m = [regex]::Match($val, ([regex]::Escape($Switch) + '=([^\s]*)'))
     $cur = @()
     if ($m.Success -and $m.Groups[1].Value.Trim() -ne '') {
         $cur = @($m.Groups[1].Value -split ',' | Where-Object { $_ -ne '' })
     }
     $has = @($cur | Where-Object { $_ -eq $feature }).Count -gt 0
     if ($enable -eq $has) {
-        Say ('特性 ' + $feature + ' 已是' + $(if ($enable) { '开启' } else { '关闭' }) + '状态，无需修改。') 'Green'
+        Say ('特性 ' + $feature + ' 已在' + $lstName + '中，无需修改。') 'Green'
         return $true
     }
 
     $list = if ($enable) { @(($cur + $feature) | Select-Object -Unique) } else { @($cur | Where-Object { $_ -ne $feature }) }
     $joined = ($list -join ',')
     $newVal = if ($m.Success) {
-        if ($joined) { $val.Replace($m.Value, '--enable-features=' + $joined) }
+        if ($joined) { $val.Replace($m.Value, $Switch + '=' + $joined) }
         else { ($val.Replace($m.Value, '') -replace '\s{2,}', ' ').Trim() }
     } else {
-        if ($joined) { ($val + ' --enable-features=' + $joined).Trim() } else { $val }
+        if ($joined) { ($val + ' ' + $Switch + '=' + $joined).Trim() } else { $val }
     }
 
     if (-not (Test-Path -LiteralPath $backupDir)) { New-Item -ItemType Directory -Path $backupDir -Force | Out-Null }
@@ -202,7 +203,7 @@ function Set-IniFeature([string]$ini, [string]$feature, [bool]$enable) {
     if (-not $out.EndsWith($s.Nl)) { $out += $s.Nl }
     [System.IO.File]::WriteAllText($ini, $out, $s.Enc)
 
-    Say ('已' + $(if ($enable) { '开启' } else { '关闭' }) + '特性：' + $feature) 'Green'
+    Say ('已' + $(if ($enable) { '加入' } else { '移出' }) + $lstName + '：' + $feature) 'Green'
     Say ('  command_line = ' + $newVal)
     Say ('  备份: ' + $bak) 'DarkGray'
     return $true
@@ -277,8 +278,8 @@ function Show-StatusJson([string]$pkgRoot, [string]$prog, [string]$ini) {
         $dataDirs = @(Get-ChildItem $data -Directory -Force -ErrorAction SilentlyContinue).Count
         $dataMb = [math]::Round(((Get-ChildItem $data -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum / 1MB), 1)
     }
-    $off = $false; $cmdLine = ''
-    if ($ini) { $s = Read-IniState $ini; $off = $s.Off; $cmdLine = $s.Value }
+    $off = $false; $cmdLine = ''; $metricsOff = $false
+    if ($ini) { $s = Read-IniState $ini; $off = $s.Off; $cmdLine = $s.Value; $metricsOff = ($cmdLine -match '--disable-features=[^\s]*\bPersistentHistograms\b') }
     [pscustomobject]@{
         Root       = $pkgRoot
         Prog       = $prog
@@ -291,6 +292,7 @@ function Show-StatusJson([string]$pkgRoot, [string]$prog, [string]$ini) {
         HasCdm     = (Test-Path (Join-Path $data 'WidevineCdm'))
         Ini        = $ini
         IniOff     = $off
+        MetricsOff = $metricsOff
         CmdLine    = $cmdLine
         EdgeRunning = (Test-EdgeRunningIn $pkgRoot)
     } | ConvertTo-Json -Compress
@@ -394,7 +396,9 @@ if ($Action) {
         'SlimAll' { if (-not (Do-SlimAll $Root $prog $ini)) { $rc = 2 } }
         'SlimOnly'{ if (-not (Do-SlimOnly $Root $prog)) { $rc = 2 } }
         'IniOff'  { if ($ini) { if (-not (Set-ComponentUpdate $ini $true)) { $rc = 1 } } else { Say '找不到 ini' 'Red'; $rc = 1 } }
-        'IniOn'   { if ($ini) { if (-not (Set-ComponentUpdate $ini $false)) { $rc = 1 } } else { Say '找不到 ini' 'Red'; $rc = 1 } }
+        'IniOn'      { if ($ini) { if (-not (Set-ComponentUpdate $ini $false)) { $rc = 1 } } else { Say '找不到 ini' 'Red'; $rc = 1 } }
+        'MetricsOff' { if ($ini) { if (-not (Set-IniFeature $ini 'PersistentHistograms' $true '--disable-features')) { $rc = 1 } } else { Say '找不到 ini' 'Red'; $rc = 1 } }
+        'MetricsOn'  { if ($ini) { if (-not (Set-IniFeature $ini 'PersistentHistograms' $false '--disable-features')) { $rc = 1 } } else { Say '找不到 ini' 'Red'; $rc = 1 } }
     }
     if (-not $Quiet) { [void](Read-Host '按回车退出') }
     exit $rc

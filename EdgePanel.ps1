@@ -493,6 +493,17 @@ $form.StartPosition = 'Manual'
 $form.Opacity = 0   # 首帧深色背景与缓存状态全部画完再显形，根治深色模式启动闪白
 $form.BackColor = $clrBg
 $form.Font = $fontBase
+$script:appIcon = $null
+try {
+    if ($env:EP_EXEPATH -and (Test-Path -LiteralPath $env:EP_EXEPATH)) {
+        $script:appIcon = [System.Drawing.Icon]::ExtractAssociatedIcon($env:EP_EXEPATH)
+    }
+    if (-not $script:appIcon) {
+        $icoCand = Join-Path $scriptsDir 'assets\app.ico'
+        if (Test-Path -LiteralPath $icoCand) { $script:appIcon = New-Object System.Drawing.Icon($icoCand) }
+    }
+    if ($script:appIcon) { $form.Icon = $script:appIcon }
+} catch { }
 $form.SuspendLayout()
 $form.Add_HandleCreated({ [ThemeHelper]::ApplyTitleBar($form.Handle, $script:isDark) })
 $form.Add_Load({
@@ -522,6 +533,7 @@ $form.Add_FormClosing({
     if ($script:panelProbePs) { try { [void]$script:panelProbePs.BeginStop($null, $null) } catch { }; $script:panelProbePs = $null }
     $script:panelProbeRs = $null
     if ($script:ghIconPath) { try { $script:ghIconPath.Dispose() } catch { }; $script:ghIconPath = $null }
+    if ($script:appIcon) { try { $script:appIcon.Dispose() } catch { }; $script:appIcon = $null }
 })
 
 $header = New-Object System.Windows.Forms.Panel
@@ -625,14 +637,38 @@ $lnkIssues.Add_MouseEnter({ $lnkIssues.ForeColor = $clrHeaderAccent })
 $lnkIssues.Add_MouseLeave({ $lnkIssues.ForeColor = $clrOnDarkMuted })
 $header.Controls.Add($lnkIssues)
 
+function Format-MiddleEllipsisPath([string]$path, [System.Drawing.Font]$font, [int]$maxW) {
+    # 路径中段省略（保留盘符 + 首段 + 末段，如 D:\App\…\Edge_Portable），实测文字宽度确保不越界
+    if ([string]::IsNullOrWhiteSpace($path)) { return '' }
+    if ([System.Windows.Forms.TextRenderer]::MeasureText($path, $font).Width -le $maxW) { return $path }
+    $parts = @($path.TrimEnd('\') -split '\\')
+    if ($parts.Count -ge 4) {
+        $cand = $parts[0] + '\' + $parts[1] + '\…\' + $parts[-1]
+        if ([System.Windows.Forms.TextRenderer]::MeasureText($cand, $font).Width -le $maxW) { return $cand }
+    }
+    if ($parts.Count -ge 3) {
+        $cand2 = $parts[0] + '\…\' + $parts[-1]
+        if ([System.Windows.Forms.TextRenderer]::MeasureText($cand2, $font).Width -le $maxW) { return $cand2 }
+    }
+    return $path
+}
+function Enable-DoubleBuffer($c) {
+    try {
+        $pi = $c.GetType().GetProperty('DoubleBuffered', [System.Reflection.BindingFlags]'Instance,NonPublic')
+        if ($pi) { $pi.SetValue($c, $true, $null) }
+    } catch { }
+}
+$swBtnText = '切换目录'
+$swBtnW = [Math]::Max((S 68), ([System.Windows.Forms.TextRenderer]::MeasureText($swBtnText, $fontSmall).Width + (S 18)))
+$subMaxW = (S 390) - $swBtnW - (S 8)
 $lblSub = New-Object System.Windows.Forms.Label
-$lblSub.Text = $pkgRoot
 $lblSub.Font = $fontSub
 $lblSub.ForeColor = $clrOnDarkMuted
 $lblSub.AutoSize = $false
-$lblSub.AutoEllipsis = $true
-$lblSub.Size = New-Object System.Drawing.Size((S 390), (S 20))
-$lblSub.Location = New-Object System.Drawing.Point((S 20), (S 44))
+$lblSub.TextAlign = 'MiddleLeft'
+$lblSub.Size = New-Object System.Drawing.Size($subMaxW, (S 22))
+$lblSub.Location = New-Object System.Drawing.Point((S 20), (S 43))
+$lblSub.Text = Format-MiddleEllipsisPath $pkgRoot $fontSub ($subMaxW - (S 4))
 $header.Controls.Add($lblSub)
 $lblSub.Cursor = 'Hand'
 $lblSub.Add_Click({
@@ -642,12 +678,20 @@ $lblSub.Add_Click({
 })
 $lblSub.Add_MouseEnter({ $lblSub.ForeColor = $clrHeaderAccent })
 $lblSub.Add_MouseLeave({ $lblSub.ForeColor = $clrOnDarkMuted })
-$script:menuPkg = New-Object System.Windows.Forms.ContextMenuStrip
-$miOpenPkg = $script:menuPkg.Items.Add('打开当前目录')
-$miOpenPkg.Add_Click({ try { Start-Process explorer.exe -ArgumentList ('"' + $pkgRoot + '"') } catch { } })
-$miSwitchPkg = $script:menuPkg.Items.Add('切换便携 Edge 目录…')
-$miSwitchPkg.Add_Click({ Invoke-SwitchPackageRoot })
-$lblSub.ContextMenuStrip = $script:menuPkg
+$script:btnSwitchPkg = New-Object FlatBtn
+$script:btnSwitchPkg.Text = $swBtnText
+$script:btnSwitchPkg.Font = $fontSmall
+$script:btnSwitchPkg.Location = New-Object System.Drawing.Point(((S 20) + $subMaxW + (S 8)), (S 43))
+$script:btnSwitchPkg.Size = New-Object System.Drawing.Size($swBtnW, (S 22))
+Apply-FlatBtnTheme $script:btnSwitchPkg $true
+$script:btnSwitchPkg.BackColor = $clrHeaderBtnBg
+$script:btnSwitchPkg.ForeColor = $clrOnDarkMuted
+$script:btnSwitchPkg.FlatAppearance.BorderColor = $clrHeaderBtnEdge
+$script:btnSwitchPkg.Add_Click({ Invoke-SwitchPackageRoot })
+Enable-DoubleBuffer $script:btnSwitchPkg
+$header.Controls.Add($script:btnSwitchPkg)
+if (-not $script:allButtons) { $script:allButtons = @() }
+$script:allButtons += $script:btnSwitchPkg
 
 $lblHint = New-Object System.Windows.Forms.Label
 $lblHint.Text = '就绪'
@@ -730,12 +774,6 @@ function New-Group([int]$x, [int]$y, [int]$w, [int]$h, [string]$title) {
     $form.Controls.Add($g)
     return $g
 }
-function Enable-DoubleBuffer($c) {
-    try {
-        $pi = $c.GetType().GetProperty('DoubleBuffered', [System.Reflection.BindingFlags]'Instance,NonPublic')
-        if ($pi) { $pi.SetValue($c, $true, $null) }
-    } catch { }
-}
 
 function New-Btn($parent, [int]$x, [int]$y, [int]$w, [int]$h, [string]$text, [scriptblock]$onClick, [bool]$primary = $false) {
     $x = S $x; $y = S $y; $w = S $w; $h = S $h
@@ -810,6 +848,44 @@ $script:btnUpdateSlim.Enabled = $false
 [void](New-Note $gUpdate 14 118 387 34 '可仅更新 Edge 本体，或更新后自动瘦身；chrome++.ini 等便携配置始终保留。')
 
 $gCache = New-Group 14 340 415 120 '缓存与备份'
+$script:suppressMetricsEvent = $false
+$mTxt = '禁用 8 MB 诊断指标'
+$mLblW = [System.Windows.Forms.TextRenderer]::MeasureText($mTxt, $fontSmall).Width + (S 6)
+$mChkW = S 18
+$mTotalW = $mChkW + $mLblW
+$mStartX = (S 401) - $mTotalW
+$script:chkMetrics = New-Object System.Windows.Forms.CheckBox
+$script:chkMetrics.Text = ''
+$script:chkMetrics.AutoSize = $false
+$script:chkMetrics.CheckAlign = 'MiddleCenter'
+$script:chkMetrics.Size = New-Object System.Drawing.Size($mChkW, (S 20))
+$script:chkMetrics.Location = New-Object System.Drawing.Point($mStartX, (S 11))
+$script:chkMetrics.Checked = $false
+$gCache.Controls.Add($script:chkMetrics)
+$script:lblMetrics = New-Object System.Windows.Forms.Label
+$script:lblMetrics.Text = $mTxt
+$script:lblMetrics.Font = $fontSmall
+$script:lblMetrics.ForeColor = $clrMuted
+$script:lblMetrics.AutoSize = $false
+$script:lblMetrics.TextAlign = 'MiddleLeft'
+$script:lblMetrics.Size = New-Object System.Drawing.Size($mLblW, (S 20))
+$script:lblMetrics.Location = New-Object System.Drawing.Point(($mStartX + $mChkW), (S 11))
+$script:lblMetrics.Cursor = 'Hand'
+$script:lblMetrics.Add_Click({ if ($script:chkMetrics.Enabled) { $script:chkMetrics.Checked = -not $script:chkMetrics.Checked } })
+$gCache.Controls.Add($script:lblMetrics)
+$script:chkMetrics.Add_CheckedChanged({
+    if ($script:suppressMetricsEvent) { return }
+    $wantOff = [bool]$script:chkMetrics.Checked
+    $act = if ($wantOff) { 'MetricsOff' } else { 'MetricsOn' }
+    $r = Invoke-Ps $edgeTune @('-Action', $act, '-Quiet', '-Root', $pkgRoot)
+    if ($r.Code -eq 0) {
+        Write-Log ($(if ($wantOff) { '已禁用 8 MB 诊断指标（--disable-features=PersistentHistograms），需重启 Edge 生效' } else { '已恢复默认诊断指标配置，需重启 Edge 生效' })) 'ok'
+    } else {
+        Write-Log '修改 chrome++.ini 失败，已还原开关状态' 'err'
+        $script:suppressMetricsEvent = $true
+        try { $script:chkMetrics.Checked = (-not $wantOff) } finally { $script:suppressMetricsEvent = $false }
+    }
+})
 $script:btnClean   = New-Btn $gCache 14  38 123 30 '清理缓存' { Invoke-Action 'Clean' }
 $script:btnBackup  = New-Btn $gCache 146 38 123 30 '清理并备份' { Invoke-CleanAndBackup -Force:(([System.Windows.Forms.Control]::ModifierKeys -band [System.Windows.Forms.Keys]::Shift) -ne 0) } $true
 $script:btnRestore = New-Btn $gCache 278 38 123 30 '从备份恢复' { Invoke-RestoreBackup }
@@ -856,9 +932,12 @@ $script:tip.SetToolTip($valDrm,    "是否已下载 WidevineCdm（DRM 组件）�
 $script:tip.SetToolTip($valIni,    "chrome++.ini 的 command_line 里是否带 --disable-component-update")
 $script:tip.SetToolTip($script:btnSlimAll, "删除约 380 项非核心组件、关闭组件更新并启用多线程下载，核心运行文件一律保留")
 $script:tip.SetToolTip($valCache,  "常规清理预计可释放体积（含包根目录 Cache\、GPU/着色器缓存、诊断指标与崩溃转储等）")
+$script:tip.SetToolTip($script:chkMetrics, '向 chrome++.ini 写入 --disable-features=PersistentHistograms，阻止自动生成 8 MB 的 BrowserMetrics 文件（需重启 Edge 生效）')
+$script:tip.SetToolTip($script:lblMetrics, '向 chrome++.ini 写入 --disable-features=PersistentHistograms，阻止自动生成 8 MB 的 BrowserMetrics 文件（需重启 Edge 生效）')
 $script:tip.SetToolTip($script:btnBackup, "清理缓存并备份用户数据（支持加密、保留份数与目录设置，可选附带面板本体或 Edge 本体）")
 $script:tip.SetToolTip($script:btnRestore, "从备份包恢复用户数据；含 Edge 本体的完整包可一并恢复程序目录")
-$script:tip.SetToolTip($lblSub, "左键单击打开当前目录；右键可切换其他便携 Edge 目录")
+$script:tip.SetToolTip($lblSub, ('单击打开目录：' + $pkgRoot))
+$script:tip.SetToolTip($script:btnSwitchPkg, ('切换便携 Edge 目录（当前：' + $pkgRoot + '）'))
 $script:tip.SetToolTip($lnkRepo, "打开 GitHub 项目主页")
 $script:tip.SetToolTip($lnkIssues, "打开 GitHub Issues 问题列表（可先查看已有记录，避免重复提交）")
 $script:tip.SetToolTip($script:btnPanelUpdate, "检查并更新面板本体（有新版变绿，支持直连与镜像站下载并校验 SHA256）")
@@ -873,7 +952,7 @@ $script:tip.SetToolTip($script:btnRecom,   ('将内置 ' + $script:baselineCount
 
 
 # ---------------- R10：没有 Edge 包时的降级态 ----------------
-$script:pkgButtons = @($script:btnSlimAll, $script:btnSlimOnly, $script:btnIniOff, $script:btnIniOn, $script:btnClean, $script:btnBackup, $script:btnDefApps, $script:btnDefender)
+$script:pkgButtons = @($script:btnSlimAll, $script:btnSlimOnly, $script:btnIniOff, $script:btnIniOn, $script:btnClean, $script:btnBackup, $script:btnDefApps, $script:btnDefender, $script:chkMetrics)
 if ($script:noPackage) {
     foreach ($b in $script:pkgButtons) {
         if ($b) { $b.Enabled = $false }
@@ -978,9 +1057,14 @@ function Initialize-LogPump {
     $script:logTimer.Start()
 }
 
-function Start-LogBlock { if ($script:logBlock) { return }; $script:logBlock = New-Object System.Collections.ArrayList }
+$script:logBlockDepth = 0
+function Start-LogBlock {
+    $script:logBlockDepth++
+    if (-not $script:logBlock) { $script:logBlock = New-Object System.Collections.ArrayList }
+}
 function End-LogBlock {
-    if (-not $script:logBlock) { return }
+    if ($script:logBlockDepth -gt 0) { $script:logBlockDepth-- }
+    if ($script:logBlockDepth -gt 0 -or -not $script:logBlock) { return }
     $rows = $script:logBlock
     $script:logBlock = $null
     foreach ($r in $rows) {
@@ -1086,6 +1170,10 @@ function Apply-Status([string]$payloadJson, [switch]$FromCache) {
         $valIni.ForeColor = if ($s.IniOff) { $clrGo } else { $clrText }
         $valCurVer.Text = '当前版本：' + (Get-LocalVersion)
         Set-SlimAllState ($s.SlimCount -eq 0 -and $s.IniOff)
+        if ($script:chkMetrics -and ($s.PSObject.Properties.Name -contains 'MetricsOff')) {
+            $script:suppressMetricsEvent = $true
+            try { $script:chkMetrics.Checked = [bool]$s.MetricsOff } finally { $script:suppressMetricsEvent = $false }
+        }
         if ($p.cacheMB) { $valCache.Text = "{0} MB" -f $p.cacheMB } else { $valCache.Text = '—' }
         $cacheNum = 0.0
         if ($p.cacheMB -and [double]::TryParse([string]$p.cacheMB, [ref]$cacheNum)) {
@@ -2891,7 +2979,8 @@ function Test-SafeDeployDir([string]$dir) {
             if ($it.Name -ieq 'Data' -or $it.Name -ieq 'Cache') { continue }
             [void]$others.Add($it.Name + '\')
         } else {
-            if (($it.Name -match $script:panelExeNameRe) -or ($it.Name -match '^(?i)Edge_Portable_.*\.(7z|zip)$')) { continue }
+            $selfN = if ($env:EP_EXEPATH) { Split-Path -Leaf $env:EP_EXEPATH } else { '' }
+            if (($it.Name -match $script:panelExeNameRe) -or ($selfN -and $it.Name -ieq $selfN) -or ($it.Name -match '^(?i)Edge_Portable_.*\.(7z|zip)$')) { continue }
             [void]$others.Add($it.Name)
         }
     }
@@ -3069,7 +3158,13 @@ function Switch-PackageRoot([string]$newRoot, [switch]$CheckRunning) {
     $script:policyKey = 'HKCU:\SOFTWARE\Policies\Microsoft\Edge_' + $pkName
     $script:policyKeyPlain = $script:policyKey -replace '^HKCU:', 'HKEY_CURRENT_USER'
     $script:statusScript = Build-StatusScript
-    if ($lblSub) { $lblSub.Text = $norm }
+    if ($lblSub) {
+        $lblSub.Text = Format-MiddleEllipsisPath $norm $fontSub ($lblSub.Width - (S 4))
+        if ($script:tip) {
+            $script:tip.SetToolTip($lblSub, ('单击打开目录：' + $norm))
+            if ($script:btnSwitchPkg) { $script:tip.SetToolTip($script:btnSwitchPkg, ('切换便携 Edge 目录（当前：' + $norm + '）')) }
+        }
+    }
     if (-not $script:noPackage) { Save-LastPkgRoot $norm }
     # 切换目录后重置依赖旧目录的缓存态，触发新目录的必需件体检、版本复核与策略漂移体检
     $script:essentialChecked = $false
@@ -3131,19 +3226,47 @@ function Show-RestorePicker($packages) {
     $listBox.Padding = New-Object System.Windows.Forms.Padding((S 6), (S 6), (S 6), (S 6))
     $listBox.Controls.Add($list)
     $dlg.Controls.Add($listBox)
-    foreach ($pk in $packages) {
+    $candList = New-Object System.Collections.ArrayList
+    foreach ($pk in @($packages)) {
+        if (-not $pk) { continue }
+        [void]$candList.Add($pk)
         $mb = [math]::Round($pk.Length / 1MB, 1)
         $kind = if ($pk.Name -like '*_Full_*') { '完整包' } else { '数据包' }
         [void]$list.Items.Add(('{0} ｜ {1} ｜ {2} MB' -f $pk.Name, $kind, $mb))
     }
     if ($list.Items.Count -gt 0) { $list.SelectedIndex = 0 }
 
-    [void](Add-DialogFooter $dlg $w ($lbY + (S 132)) '开始恢复' 'primary')
+    $extY = $lbY + (S 132) + (S 8)
+    $extTxt = '浏览其他位置…'
+    $extW = [Math]::Max((S 120), ([System.Windows.Forms.TextRenderer]::MeasureText($extTxt, $fontSmall).Width + (S 20)))
+    $btnExt = New-Object FlatBtn
+    $btnExt.Text = $extTxt
+    $btnExt.Font = $fontSmall
+    $btnExt.Location = New-Object System.Drawing.Point($pad, $extY)
+    $btnExt.Size = New-Object System.Drawing.Size($extW, (S 26))
+    Apply-FlatBtnTheme $btnExt $false
+    $btnExt.Add_Click({
+        $ofd = New-Object System.Windows.Forms.OpenFileDialog
+        $ofd.Title = '选择备份压缩包（.7z / .zip）'
+        $ofd.Filter = '备份压缩包 (*.7z;*.zip)|*.7z;*.zip'
+        if ($ofd.ShowDialog() -eq 'OK' -and (Test-Path -LiteralPath $ofd.FileName)) {
+            $fi = Get-Item -LiteralPath $ofd.FileName
+            $mb2 = [math]::Round($fi.Length / 1MB, 1)
+            $kind2 = if ($fi.Name -like '*_Full_*') { '完整包' } else { '数据包' }
+            $ix = $candList.Add($fi)
+            [void]$list.Items.Add(('{0} ｜ {1} ｜ {2} MB（外部文件）' -f $fi.Name, $kind2, $mb2))
+            $list.SelectedIndex = $ix
+        }
+        $ofd.Dispose()
+    })
+    $dlg.Controls.Add($btnExt)
+
+    [void](Add-DialogFooter $dlg $w ($extY + (S 26)) '开始恢复' 'primary')
     $res = $dlg.ShowDialog()
     $idx = $list.SelectedIndex
     $dlg.Dispose()
-    if ($res -ne 'OK' -or $idx -lt 0) { return $null }
-    return $packages[$idx]
+    if ($res -ne 'OK' -or $idx -lt 0 -or $idx -ge $candList.Count) { return $null }
+    return $candList[$idx]
 }
 
 function Invoke-RestoreBackup([switch]$Auto) {
@@ -3151,12 +3274,11 @@ function Invoke-RestoreBackup([switch]$Auto) {
     $packer = Find-Packer
     if (-not $packer) { Write-Log '面板内置的 7za 不在，无法恢复' 'err'; return }
     Write-Log '打开恢复：正在扫描备份目录…'
-    $pkgs = Get-BackupPackages
-    if ($pkgs.Count -eq 0) {
-        Write-Log ('备份目录里没有可恢复的包：' + (Resolve-BackupDir (Get-BackupCfg).dir)) 'err'
-        return
+    $pkgs = @(Get-BackupPackages)
+    if ($Auto) {
+        if ($pkgs.Count -eq 0) { Write-Log ('备份目录里没有可恢复的包：' + (Resolve-BackupDir (Get-BackupCfg).dir)) 'err'; return }
+        $pick = $pkgs[0]; Write-Log ('自动选择最新备份：' + $pick.Name)
     }
-    if ($Auto) { $pick = $pkgs[0]; Write-Log ('自动选择最新备份：' + $pick.Name) }
     else {
         $pick = Show-RestorePicker $pkgs
         if (-not $pick) { Write-Log '已取消恢复'; return }
@@ -3780,7 +3902,7 @@ function Invoke-UpdateNow([bool]$withSlim = $false) {
             $sample = (($safe.Others | Select-Object -First 5) -join '、')
             Write-Log ('当前目录不是空目录，已阻止部署（发现无关项：' + $sample + '）') 'err'
             if (-not $RunOnce) {
-                [void](Show-DialogAsk '无法在非空目录部署' ("当前目录包含非备份/非面板文件（" + $sample + "），不允许直接部署便携 Edge。`r`n`r`n请将面板移至空目录，或右键左上角路径切换至已有便携 Edge 目录。") '知道了' '关闭')
+                [void](Show-DialogAsk '无法在非空目录部署' ("当前目录包含非备份/非面板文件（" + $sample + "），不允许直接部署便携 Edge。`r`n`r`n请将面板移至空目录，或点击左上角「切换目录」选择已有便携 Edge。") '知道了' '关闭')
             }
             return
         }
@@ -4575,7 +4697,7 @@ if ($ok) {
         }
     } catch { }
 }
-try { Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue } catch { }
+if ($PSCommandPath) { try { Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue } catch { } }
 '@
         [System.IO.File]::WriteAllText($helperPath, $helperBody, (New-Object System.Text.UTF8Encoding($true)))
         Write-Log '新版面板已就绪，即将退出并自动重启更新…' 'ok'
@@ -4741,6 +4863,7 @@ Write-Log ('面板已启动；包根：' + $pkgRoot)
 
 $form.ResumeLayout($false)
 [void]$form.ShowDialog()
+
 
 
 

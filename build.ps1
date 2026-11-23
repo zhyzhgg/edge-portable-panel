@@ -117,19 +117,47 @@ if ([string]::IsNullOrWhiteSpace($Out)) { $Out = Join-Path $src 'Edge面板.exe'
 $dir = Split-Path $Out -Parent
 if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
 
-# ---- 编译 ----
-$cscArgs = @(
-    '/nologo', '/target:winexe', '/platform:anycpu', '/optimize+',
-    '/r:System.Windows.Forms.dll',
-    ('/out:' + $Out)
-)
-foreach ($rel in $resources.Keys) {
-    $cscArgs += ('/resource:' + (Join-Path $src $rel) + ',' + $resources[$rel])
-}
-$cscArgs += $hostCs
+# ---- 编译（资源 Deflate 压缩为 appz/* + 嵌入应用图标，目标 EXE <= 1 MB）----
+$stageDir = Join-Path $env:TEMP ('ep-build-res-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $stageDir -Force | Out-Null
+$rawSum = 0L; $zipSum = 0L
+try {
+    $cscArgs = @(
+        '/nologo', '/target:winexe', '/platform:anycpu', '/optimize+',
+        '/r:System.Windows.Forms.dll',
+        ('/out:' + $Out)
+    )
+    $appIco = Join-Path $src 'assets\app.ico'
+    if (Test-Path -LiteralPath $appIco) {
+        $cscArgs += ('/win32icon:' + $appIco)
+    }
+    $resIdx = 0
+    foreach ($rel in $resources.Keys) {
+        $srcFile = Join-Path $src $rel
+        $rawBytes = [System.IO.File]::ReadAllBytes($srcFile)
+        $rawSum += $rawBytes.Length
+        $ms = New-Object System.IO.MemoryStream
+        # 严格使用 .NET 4.0 构造函数（兼容 .NET 4.0，仅传 CompressionMode）
+        $ds = New-Object System.IO.Compression.DeflateStream($ms, [System.IO.Compression.CompressionMode]::Compress, $true)
+        $ds.Write($rawBytes, 0, $rawBytes.Length)
+        $ds.Close()
+        $zBytes = $ms.ToArray()
+        $ms.Dispose()
+        $zipSum += $zBytes.Length
+        $zFile = Join-Path $stageDir ('r' + $resIdx + '.deflate')
+        [System.IO.File]::WriteAllBytes($zFile, $zBytes)
+        $logicalName = ($resources[$rel] -replace '^app/', 'appz/')
+        $cscArgs += ('/resource:' + $zFile + ',' + $logicalName)
+        $resIdx++
+    }
+    Write-Host ('资源压缩（Deflate）：{0:N0} KB → {1:N0} KB' -f ($rawSum / 1KB), ($zipSum / 1KB)) -ForegroundColor DarkGray
+    $cscArgs += $hostCs
 
-& $Csc @cscArgs
-if ($LASTEXITCODE -ne 0) { throw ("编译失败（csc 退出码 $LASTEXITCODE）") }
+    & $Csc @cscArgs
+    if ($LASTEXITCODE -ne 0) { throw ("编译失败（csc 退出码 $LASTEXITCODE）") }
+} finally {
+    if (Test-Path -LiteralPath $stageDir) { Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue }
+}
 
 $f = Get-Item -LiteralPath $Out
 Write-Host ''

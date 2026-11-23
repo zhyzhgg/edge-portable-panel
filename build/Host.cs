@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -10,7 +11,7 @@ using System.Text.RegularExpressions;
 [assembly: AssemblyProduct("便携 Edge 面板")]
 [assembly: AssemblyCompany("EdgePanel")]
 [assembly: AssemblyVersion("1.3.6.0")]
-[assembly: AssemblyFileVersion("1.3.6.247")]
+[assembly: AssemblyFileVersion("1.3.6.250")]
 [assembly: AssemblyInformationalVersion("v1.3.6")]
 
 // 便携 Edge 面板 —— 单文件 EXE 宿主
@@ -20,7 +21,7 @@ using System.Text.RegularExpressions;
 internal static class Host
 {
     // 资源版本号：内容变了就改这里，触发重新解包
-    private const string ResourceVersion = "2026-11-21.247";   // 解包目录键（每次改内容 -Bump）
+    private const string ResourceVersion = "2026-11-21.250";   // 解包目录键（每次改内容 -Bump）
     private const string ProductVersion = "v1.3.6";   // 必须与 EdgePanel.ps1 的 $script:panelVersion 一致（build.ps1 自动校验）
     private const string FallbackFolderName = "EdgePanel";
 
@@ -77,7 +78,9 @@ internal static class Host
             string full = Path.GetFullPath(scriptPath);
             string defRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), FallbackFolderName);
             string ovRoot = Environment.GetEnvironmentVariable("EP_RUNTIME");
+            string tmpPrefix = Path.Combine(Path.GetTempPath(), "EdgePanel-");
             bool allowed = full.StartsWith(defRoot.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase)
+                || full.StartsWith(tmpPrefix, StringComparison.OrdinalIgnoreCase)
                 || (!string.IsNullOrEmpty(ovRoot) && full.StartsWith(ovRoot.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase));
             if (!allowed || !full.EndsWith(".ps1", StringComparison.OrdinalIgnoreCase) || !File.Exists(full)) return 5;
             var psi = new ProcessStartInfo
@@ -165,17 +168,16 @@ internal static class Host
         string baseDir = null;
         try
         {
-            baseDir = PrepareAndExtract(runtimeRoot);
             _runtimeRoot = runtimeRoot;
+            baseDir = PrepareSessionDir(runtimeRoot);
         }
         catch (Exception ex1)
         {
             WriteLog("extract failed: " + ex1.Message);
-            // winexe 静默退出会让"双击没反应"——弹窗说明原因与日志位置
             try
             {
                 System.Windows.Forms.MessageBox.Show(
-                    "便携 Edge 面板启动失败：无法创建运行时目录。\r\n\r\n" +
+                    "便携 Edge 面板启动失败：无法准备临时运行目录。\r\n\r\n" +
                     "原因（概要）：" + Truncate(ex1.Message, 200) + "\r\n\r\n" +
                     "详细日志：" + runtimeRoot + "\\logs\\",
                     "便携 Edge 面板", System.Windows.Forms.MessageBoxButtons.OK,
@@ -185,48 +187,44 @@ internal static class Host
             return 2;
         }
 
-        // _earlyLog（7zr 解包被跳过等原因）落盘：此前只写内存从未读出
         if (_earlyLog.Length > 0) WriteLog(_earlyLog.ToString());
-
-        string mainScript = Path.Combine(baseDir, "EdgePanel.ps1");
-        if (!File.Exists(mainScript))
-        {
-            WriteLog("main script missing: " + mainScript);
-            try
-            {
-                System.Windows.Forms.MessageBox.Show(
-                    "便携 Edge 面板启动失败：主脚本缺失（" + mainScript + "）。\r\n\r\n" +
-                    "请重新覆盖安装 Edge面板.exe。", "便携 Edge 面板",
-                    System.Windows.Forms.MessageBoxButtons.OK, System.Windows.Forms.MessageBoxIcon.Error);
-            }
-            catch { }
-            return 3;
-        }
-
-        Environment.SetEnvironmentVariable("EP_APPDIR", baseDir);
-        Environment.SetEnvironmentVariable("EP_EXEDIR", exeDir);
-        // 面板自更新需要知道"当前正在运行的 EXE 是哪一份"（用户可能把它改名成 EdgePanel.exe）
-        try { Environment.SetEnvironmentVariable("EP_EXEPATH", Assembly.GetExecutingAssembly().Location); } catch { }
-        Environment.SetEnvironmentVariable("EP_RUNTIME", _runtimeRoot);
-        Environment.SetEnvironmentVariable("EP_ARGS", string.Join(" ", args));
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe"),
-            Arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File \"" + mainScript + "\"",
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = baseDir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            // 子进程是 Windows PowerShell，输出按系统 ANSI 代码页（中文机 = GBK）编码；
-            // 用 Encoding.Default 解码才能拿到正确中文，日志再以 UTF-8 写盘。
-            StandardOutputEncoding = Encoding.Default,
-            StandardErrorEncoding = Encoding.Default
-        };
 
         try
         {
+            string mainScript = Path.Combine(baseDir, "EdgePanel.ps1");
+            if (!File.Exists(mainScript))
+            {
+                WriteLog("main script missing: " + mainScript);
+                try
+                {
+                    System.Windows.Forms.MessageBox.Show(
+                        "便携 Edge 面板启动失败：主脚本缺失（" + mainScript + "）。\r\n\r\n" +
+                        "请重新覆盖安装 EdgePanel.exe。", "便携 Edge 面板",
+                        System.Windows.Forms.MessageBoxButtons.OK, System.Windows.Forms.MessageBoxIcon.Error);
+                }
+                catch { }
+                return 3;
+            }
+
+            Environment.SetEnvironmentVariable("EP_APPDIR", baseDir);
+            Environment.SetEnvironmentVariable("EP_EXEDIR", exeDir);
+            try { Environment.SetEnvironmentVariable("EP_EXEPATH", Assembly.GetExecutingAssembly().Location); } catch { }
+            Environment.SetEnvironmentVariable("EP_RUNTIME", _runtimeRoot);
+            Environment.SetEnvironmentVariable("EP_ARGS", string.Join(" ", args));
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe"),
+                Arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File \"" + mainScript + "\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = baseDir,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.Default,
+                StandardErrorEncoding = Encoding.Default
+            };
+
             using (var p = Process.Start(psi))
             {
                 var sb = new StringBuilder();
@@ -253,6 +251,14 @@ internal static class Host
             catch { }
             return 4;
         }
+        finally
+        {
+            // 退出即删整个临时会话目录（程序脚本、JSON 与 7za.exe 不长期留在磁盘）
+            if (!string.IsNullOrEmpty(baseDir))
+            {
+                try { if (Directory.Exists(baseDir)) Directory.Delete(baseDir, true); } catch { }
+            }
+        }
     }
 
     private static string Truncate(string s, int max)
@@ -261,42 +267,15 @@ internal static class Host
         return s.Length <= max ? s : s.Substring(0, max) + "…";
     }
 
-    // 准备运行时目录：建目录 → 解包当前版本（带完成标记，避免重复覆写）→ 清掉旧版本
-    private static string PrepareAndExtract(string runtimeRoot)
+    // 临时会话目录（%TEMP%\EdgePanel-<pid>-<8hex>\）：程序文件不落 %LOCALAPPDATA%，退出即删，崩溃由下次启动自清
+    private static string PrepareSessionDir(string runtimeRoot)
     {
         if (!Directory.Exists(runtimeRoot)) Directory.CreateDirectory(runtimeRoot);
-
-        string baseDir = Path.Combine(runtimeRoot, ResourceVersion);
-        // 完成标记：上一次解包成功则跳过——双开第二实例 / Defender 扫描 7zr 时
-        // 覆写会抛 IOException，曾经被误判成"目录不可写"而静默分裂回退
-        string marker = Path.Combine(baseDir, ".extracted");
-        if (!(File.Exists(marker) && File.Exists(Path.Combine(baseDir, "EdgePanel.ps1"))))
-        {
-            ExtractAll(baseDir);
-            try { File.WriteAllBytes(marker, new byte[0]); } catch { }
-        }
-        else if (!File.Exists(Path.Combine(baseDir, @"tools\7zr.exe")))
-        {
-            // 标记在但 7zr 缺失（杀软拦截或事后删除）→ 只补解包 7zr，兑现
-            // "重启面板自动恢复"的承诺；不覆写其它已存在文件
-            try
-            {
-                string res = "app/tools/7zr.exe";
-                Stream s = Assembly.GetExecutingAssembly().GetManifestResourceStream(res);
-                if (s != null)
-                {
-                    using (s)
-                    using (var fs = new FileStream(Path.Combine(baseDir, @"tools\7zr.exe"), FileMode.Create, FileAccess.Write, FileShare.None))
-                    {
-                        s.CopyTo(fs);
-                    }
-                    Append(_earlyLog, "7zr.exe was missing, re-extracted");
-                }
-            }
-            catch (Exception ex) { Append(_earlyLog, "7zr re-extract failed: " + ex.Message); }
-        }
-        PruneOldVersions(runtimeRoot, ResourceVersion);
-        return baseDir;
+        string tag = Process.GetCurrentProcess().Id.ToString() + "-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+        string sessionDir = Path.Combine(Path.GetTempPath(), "EdgePanel-" + tag);
+        ExtractAll(sessionDir);
+        PruneRuntimeAndTemp(runtimeRoot, sessionDir);
+        return sessionDir;
     }
 
     private static void Append(StringBuilder sb, string line)
@@ -304,18 +283,93 @@ internal static class Host
         lock (sb) { sb.AppendLine(line); }
     }
 
-    // 只删「版本目录」，logs / cache 这些兄弟目录不能碰
-    private static void PruneOldVersions(string runtimeRoot, string current)
+    // 启动自清：清历史版本目录、超 1 小时临时会话、超 30 天日志、超 1 天 cache 临时文件、超 7 天 _shared 中间产物
+    private static void PruneRuntimeAndTemp(string runtimeRoot, string currentSessionDir)
     {
+        DateTime now = DateTime.UtcNow;
+        // ① 清理 %LOCALAPPDATA%\EdgePanel\ 下的所有旧版本程序目录（2026-xx-xx.NNN），只保留用户状态
         try
         {
-            if (!Directory.Exists(runtimeRoot)) return;
-            foreach (string dir in Directory.GetDirectories(runtimeRoot))
+            if (Directory.Exists(runtimeRoot))
             {
-                string name = Path.GetFileName(dir);
-                if (string.Equals(name, current, StringComparison.OrdinalIgnoreCase)) continue;
-                if (!Regex.IsMatch(name, @"^\d{4}-\d{2}-\d{2}\.\d+$")) continue;   // 只认版本号命名的目录
-                try { Directory.Delete(dir, true); } catch { }
+                foreach (string dir in Directory.GetDirectories(runtimeRoot))
+                {
+                    string name = Path.GetFileName(dir);
+                    if (!Regex.IsMatch(name, @"^\d{4}-\d{2}-\d{2}\.\d+$")) continue;
+                    try { Directory.Delete(dir, true); } catch { }
+                }
+            }
+        }
+        catch { }
+
+        // ② 清扫 %TEMP%\EdgePanel-* 超过 1 小时的崩溃残留
+        try
+        {
+            string tmpRoot = Path.GetTempPath();
+            foreach (string dir in Directory.GetDirectories(tmpRoot, "EdgePanel-*"))
+            {
+                if (string.Equals(dir.TrimEnd('\\'), currentSessionDir.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)) continue;
+                try
+                {
+                    if ((now - Directory.GetLastWriteTimeUtc(dir)).TotalHours >= 1.0)
+                    {
+                        // 同机可能同时开着多个面板实例（各管不同便携包），别把还在跑的实例的会话删了
+                        bool inUse = false;
+                        Match pm = Regex.Match(Path.GetFileName(dir), @"^EdgePanel-(\d+)-");
+                        if (pm.Success)
+                        {
+                            int otherPid;
+                            if (int.TryParse(pm.Groups[1].Value, out otherPid))
+                            {
+                                try { Process.GetProcessById(otherPid); inUse = true; } catch { inUse = false; }
+                            }
+                        }
+                        if (!inUse) Directory.Delete(dir, true);
+                    }
+                }
+                catch { }
+            }
+        }
+        catch { }
+
+        // ③ logs\host-*.log 保留最近 30 天
+        try
+        {
+            string logDir = Path.Combine(runtimeRoot, "logs");
+            if (Directory.Exists(logDir))
+            {
+                foreach (string f in Directory.GetFiles(logDir, "host-*.log"))
+                {
+                    try { if ((now - File.GetLastWriteTimeUtc(f)).TotalDays >= 30.0) File.Delete(f); } catch { }
+                }
+            }
+        }
+        catch { }
+
+        // ④ cache\*.tmp.* 超过 1 天清理
+        try
+        {
+            string cacheDir = Path.Combine(runtimeRoot, "cache");
+            if (Directory.Exists(cacheDir))
+            {
+                foreach (string f in Directory.GetFiles(cacheDir, "*.tmp.*"))
+                {
+                    try { if ((now - File.GetLastWriteTimeUtc(f)).TotalDays >= 1.0) File.Delete(f); } catch { }
+                }
+            }
+        }
+        catch { }
+
+        // ⑤ _shared\ 翻译中间产物超过 7 天清理
+        try
+        {
+            string sharedDir = Path.Combine(runtimeRoot, "_shared");
+            if (Directory.Exists(sharedDir))
+            {
+                foreach (string f in Directory.GetFiles(sharedDir, "*", SearchOption.AllDirectories))
+                {
+                    try { if ((now - File.GetLastWriteTimeUtc(f)).TotalDays >= 7.0) File.Delete(f); } catch { }
+                }
             }
         }
         catch { }
@@ -328,13 +382,15 @@ internal static class Host
         Assembly asm = Assembly.GetExecutingAssembly();
         foreach (string name in asm.GetManifestResourceNames())
         {
-            if (!name.StartsWith("app/", StringComparison.Ordinal)) continue;
-            string rel = name.Substring(4).Replace('/', '\\');
+            bool isDeflate = name.StartsWith("appz/", StringComparison.Ordinal);
+            bool isRaw = !isDeflate && name.StartsWith("app/", StringComparison.Ordinal);
+            if (!isDeflate && !isRaw) continue;
+            string rel = name.Substring(isDeflate ? 5 : 4).Replace('/', '\\');
             string dest = Path.Combine(baseDir, rel);
             string dir = Path.GetDirectoryName(dest);
             if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
 
-            // 7zr.exe 单独容错：杀软常拦它；拦截只影响备份功能，不应让面板起不来
+            // 7za.exe 单独容错：杀软拦截只影响备份功能，不应让面板起不来
             try
             {
                 using (Stream s = asm.GetManifestResourceStream(name))
@@ -342,17 +398,27 @@ internal static class Host
                     if (s == null) continue;
                     using (var fs = new FileStream(dest, FileMode.Create, FileAccess.Write, FileShare.None))
                     {
-                        s.CopyTo(fs);
+                        if (isDeflate)
+                        {
+                            using (var ds = new DeflateStream(s, CompressionMode.Decompress))
+                            {
+                                ds.CopyTo(fs);
+                            }
+                        }
+                        else
+                        {
+                            s.CopyTo(fs);
+                        }
                     }
                 }
             }
             catch (Exception ex)
             {
-                if (rel.EndsWith("7zr.exe", StringComparison.OrdinalIgnoreCase))
+                if (rel.EndsWith("7za.exe", StringComparison.OrdinalIgnoreCase) || rel.EndsWith("7zr.exe", StringComparison.OrdinalIgnoreCase))
                 {
-                    Append(_earlyLog, "7zr extract skipped (AV lock?): " + ex.Message);
+                    Append(_earlyLog, "packer extract skipped (AV lock?): " + ex.Message);
                 }
-                else { throw; }   // 非 7zr 的资源解包失败仍要抛出（走正常的回退路径）
+                else { throw; }
             }
         }
     }

@@ -39,7 +39,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 # 公共函数（包根定位等）只维护一份
-. (Join-Path $PSScriptRoot '_Common.ps1')
+$scriptHome = if ($env:EP_APPDIR) { $env:EP_APPDIR } else { $PSScriptRoot }
+. (Join-Path $scriptHome '_Common.ps1')
 
 # ---- 清理目标（相对 Root 的路径 + 说明）--------------------------------------
 # 原则：只清「可再生缓存 / 纯统计」；不碰书签、密码、历史、登录态、扩展本体与配置
@@ -285,7 +286,7 @@ function Show-StorageAudit([string]$dataDir) {
 }
 
 # ---- 0. 环境自检 --------------------------------------------------------------
-if ([string]::IsNullOrWhiteSpace($Root)) { $Root = Find-PackageRoot $PSScriptRoot }
+if ([string]::IsNullOrWhiteSpace($Root)) { $Root = Find-PackageRoot $scriptHome }
 if ([string]::IsNullOrWhiteSpace($Root)) { $Root = (Get-Location).Path }
 $Root = [System.IO.Path]::GetFullPath($Root).TrimEnd('\')
 $exe = Join-Path $Root 'Edge\msedge.exe'
