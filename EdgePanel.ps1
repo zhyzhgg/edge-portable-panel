@@ -658,9 +658,10 @@ function Enable-DoubleBuffer($c) {
         if ($pi) { $pi.SetValue($c, $true, $null) }
     } catch { }
 }
-$swBtnText = '切换目录'
-$swBtnW = [Math]::Max((S 68), ([System.Windows.Forms.TextRenderer]::MeasureText($swBtnText, $fontSmall).Width + (S 18)))
-$subMaxW = (S 390) - $swBtnW - (S 8)
+# 目录末尾的下拉箭头（点它切换便携包目录）：路径可用宽 = 390 - 箭头宽 - 间距
+$swChevTxt = '▾'
+$swChevW = [Math]::Max((S 18), ([System.Windows.Forms.TextRenderer]::MeasureText($swChevTxt, $fontSmall).Width + (S 10)))
+$subMaxW = (S 390) - $swChevW - (S 6)
 $lblSub = New-Object System.Windows.Forms.Label
 $lblSub.Font = $fontSub
 $lblSub.ForeColor = $clrOnDarkMuted
@@ -668,7 +669,8 @@ $lblSub.AutoSize = $false
 $lblSub.TextAlign = 'MiddleLeft'
 $lblSub.Size = New-Object System.Drawing.Size($subMaxW, (S 22))
 $lblSub.Location = New-Object System.Drawing.Point((S 20), (S 43))
-$lblSub.Text = Format-MiddleEllipsisPath $pkgRoot $fontSub ($subMaxW - (S 4))
+    $lblSub.Text = Format-MiddleEllipsisPath $pkgRoot $fontSub ($subMaxW - (S 2))
+    $lblSub.Size = New-Object System.Drawing.Size([int][Math]::Min((([System.Windows.Forms.TextRenderer]::MeasureText($lblSub.Text, $fontSub).Width) + (S 4)), $subMaxW), (S 22))
 $header.Controls.Add($lblSub)
 $lblSub.Cursor = 'Hand'
 $lblSub.Add_Click({
@@ -679,15 +681,22 @@ $lblSub.Add_Click({
 $lblSub.Add_MouseEnter({ $lblSub.ForeColor = $clrHeaderAccent })
 $lblSub.Add_MouseLeave({ $lblSub.ForeColor = $clrOnDarkMuted })
 $script:btnSwitchPkg = New-Object FlatBtn
-$script:btnSwitchPkg.Text = $swBtnText
+$script:btnSwitchPkg.Text = $swChevTxt
 $script:btnSwitchPkg.Font = $fontSmall
-$script:btnSwitchPkg.Location = New-Object System.Drawing.Point(((S 20) + $subMaxW + (S 8)), (S 43))
-$script:btnSwitchPkg.Size = New-Object System.Drawing.Size($swBtnW, (S 22))
+$script:btnSwitchPkg.Location = New-Object System.Drawing.Point([int]($lblSub.Right + (S 2)), (S 42))
+$script:btnSwitchPkg.Size = New-Object System.Drawing.Size($swChevW, (S 24))
+$script:btnSwitchPkg.FlatStyle = 'Flat'
 Apply-FlatBtnTheme $script:btnSwitchPkg $true
-$script:btnSwitchPkg.BackColor = $clrHeaderBtnBg
+$script:btnSwitchPkg.BackColor = $clrHeader
 $script:btnSwitchPkg.ForeColor = $clrOnDarkMuted
-$script:btnSwitchPkg.FlatAppearance.BorderColor = $clrHeaderBtnEdge
+$script:btnSwitchPkg.FlatAppearance.BorderSize = 0
+$script:btnSwitchPkg.FlatAppearance.MouseOverBackColor = $clrHeaderBtnBg
+$script:btnSwitchPkg.FlatAppearance.MouseDownBackColor = $clrHeaderBtnBg
+$script:btnSwitchPkg.Cursor = 'Hand'
+$script:btnSwitchPkg.Add_MouseEnter({ $script:btnSwitchPkg.ForeColor = $clrHeaderAccent })
+$script:btnSwitchPkg.Add_MouseLeave({ $script:btnSwitchPkg.ForeColor = $clrOnDarkMuted })
 $script:btnSwitchPkg.Add_Click({ Invoke-SwitchPackageRoot })
+Enable-DoubleBuffer $script:btnSwitchPkg
 Enable-DoubleBuffer $script:btnSwitchPkg
 $header.Controls.Add($script:btnSwitchPkg)
 if (-not $script:allButtons) { $script:allButtons = @() }
@@ -961,6 +970,7 @@ $script:logQueue = $null      # ConcurrentQueue，写入端可能是后台线程
 $script:logTimer = $null
 $script:logBlock = $null      # 非空时 Write-Log 先攒到块里，End-LogBlock 再整块入队
 $script:progressStop = $false   # 长任务（深度搜索）的中断标记
+$script:pickedRestoreDir = ''   # 恢复弹窗里手动选的目录（用于记忆上次选择）
 
 function Append-LogRow($row) {
     if (-not $log -or $log.IsDisposed) { return }
@@ -1871,7 +1881,7 @@ function Set-BackupPw([string]$plain) {
 function Get-BackupModeFile { return (Join-Path (Get-RuntimeCacheDir) 'backup-mode.json') }
 function Get-BackupCfg {
     # 备份偏好：方式(encrypted/plain)、格式(7z/zip)、保留份数(1-9)、目标目录(空=包根)、附带面板/浏览器(默认不勾，记忆上次)
-    $cfg = @{ last = 'encrypted'; fmt = '7z'; keep = 3; dir = ''; panel = $false; full = $false }
+    $cfg = @{ last = 'encrypted'; fmt = '7z'; keep = 3; dir = ''; panel = $false; full = $false; rdir = '' }
     $f = Get-BackupModeFile
     if (Test-Path -LiteralPath $f) {
         try {
@@ -1882,6 +1892,7 @@ function Get-BackupCfg {
             if ($o.dir) { $cfg.dir = [string]$o.dir }
             if ($o.PSObject.Properties.Name -contains 'panel') { $cfg.panel = [bool]$o.panel }
             if ($o.PSObject.Properties.Name -contains 'full')  { $cfg.full  = [bool]$o.full }
+            if ($o.rdir) { $cfg.rdir = [string]$o.rdir }
         } catch { }
     }
     return $cfg
@@ -1895,7 +1906,7 @@ function Normalize-Keep($val) {
 }
 function Save-BackupCfg([hashtable]$cfg) {
     try {
-        [ordered]@{ last = [string]$cfg.last; fmt = $(if ($cfg.fmt -eq 'zip') { 'zip' } else { '7z' }); keep = (Normalize-Keep $cfg.keep); dir = [string]$cfg.dir; panel = [bool]$cfg.panel; full = [bool]$cfg.full; updated = (Get-Date).ToString('s') } |
+        [ordered]@{ last = [string]$cfg.last; fmt = $(if ($cfg.fmt -eq 'zip') { 'zip' } else { '7z' }); keep = (Normalize-Keep $cfg.keep); dir = [string]$cfg.dir; panel = [bool]$cfg.panel; full = [bool]$cfg.full; rdir = [string]$cfg.rdir; updated = (Get-Date).ToString('s') } |
             ConvertTo-Json -Compress | Set-Content -LiteralPath (Get-BackupModeFile) -Encoding UTF8
     } catch { Write-Log ('保存备份配置失败：' + $_.Exception.Message) 'warn' }
 }
@@ -3095,6 +3106,20 @@ function Show-PkgPickerDialog([string[]]$foundDirs, [string]$curExeDir, [string]
     return $null
 }
 
+function Update-PathLabel {
+    # 路径按可用宽做中段省略，标签宽随文字收缩，下箭头紧贴文字末尾
+    if (-not $lblSub) { return }
+    $t = Format-MiddleEllipsisPath $pkgRoot $fontSub ($subMaxW - (S 2))
+    $lblSub.Text = $t
+    $w = ([System.Windows.Forms.TextRenderer]::MeasureText($t, $fontSub).Width) + (S 4)
+    if ($w -gt $subMaxW) { $w = $subMaxW }
+    $lblSub.Size = New-Object System.Drawing.Size([int]$w, (S 22))
+    if ($script:btnSwitchPkg) {
+        $script:btnSwitchPkg.Location = New-Object System.Drawing.Point([int]($lblSub.Right + (S 2)), (S 42))
+    }
+    if ($script:tip) { $script:tip.SetToolTip($lblSub, ('单击打开目录：' + $pkgRoot)) }
+}
+
 function Switch-PackageRoot([string]$newRoot, [switch]$CheckRunning) {
     if ([string]::IsNullOrWhiteSpace($newRoot)) { return }
     $norm = [System.IO.Path]::GetFullPath($newRoot).TrimEnd('\')
@@ -3115,7 +3140,7 @@ function Switch-PackageRoot([string]$newRoot, [switch]$CheckRunning) {
     $script:policyKeyPlain = $script:policyKey -replace '^HKCU:', 'HKEY_CURRENT_USER'
     $script:statusScript = Build-StatusScript
     if ($lblSub) {
-        $lblSub.Text = Format-MiddleEllipsisPath $norm $fontSub ($lblSub.Width - (S 4))
+        Update-PathLabel
         if ($script:tip) {
             $script:tip.SetToolTip($lblSub, ('单击打开目录：' + $norm))
             if ($script:btnSwitchPkg) { $script:tip.SetToolTip($script:btnSwitchPkg, ('切换便携 Edge 目录（当前：' + $norm + '）')) }
@@ -3192,9 +3217,29 @@ function Show-RestorePicker($packages) {
     }
     if ($list.Items.Count -gt 0) { $list.SelectedIndex = 0 }
 
+    # 上次用过的手动目录：直接并入候选（不必每次重新浏览）
+    $lastRestoreDir = [string](Get-BackupCfg).rdir
+    $script:pickedRestoreDir = ''
+    $addDirPkgs = {
+        param([string]$dir, [string]$tag)
+        if ([string]::IsNullOrWhiteSpace($dir) -or -not (Test-Path -LiteralPath $dir)) { return 0 }
+        $added = 0
+        foreach ($f2 in @(Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(?i)Edge_Portable_(Data|Full)_.*\.(7z|zip)$' } | Sort-Object LastWriteTime -Descending)) {
+            if (@($candList | Where-Object { $_.FullName -eq $f2.FullName }).Count -gt 0) { continue }
+            $ix = $candList.Add($f2)
+            $mb2 = [math]::Round($f2.Length / 1MB, 1)
+            $kind2 = if ($f2.Name -like '*_Full_*') { '完整包' } else { '数据包' }
+            [void]$list.Items.Add(('{0} ｜ {1} ｜ {2} MB{3}' -f $f2.Name, $kind2, $mb2, $tag))
+            $added++
+        }
+        return $added
+    }
+    [void](& $addDirPkgs $lastRestoreDir '（上次目录）')
+    if ($list.Items.Count -gt 0) { $list.SelectedIndex = 0 }
+
     $extY = $lbY + (S 132) + (S 8)
-    $extTxt = '浏览其他位置…'
-    $extW = [Math]::Max((S 120), ([System.Windows.Forms.TextRenderer]::MeasureText($extTxt, $fontSmall).Width + (S 20)))
+    $extTxt = '选择目录…'
+    $extW = [Math]::Max((S 110), ([System.Windows.Forms.TextRenderer]::MeasureText($extTxt, $fontSmall).Width + (S 20)))
     $btnExt = New-Object FlatBtn
     $btnExt.Text = $extTxt
     $btnExt.Font = $fontSmall
@@ -3202,18 +3247,18 @@ function Show-RestorePicker($packages) {
     $btnExt.Size = New-Object System.Drawing.Size($extW, (S 26))
     Apply-FlatBtnTheme $btnExt $false
     $btnExt.Add_Click({
-        $ofd = New-Object System.Windows.Forms.OpenFileDialog
-        $ofd.Title = '选择备份压缩包（.7z / .zip）'
-        $ofd.Filter = '备份压缩包 (*.7z;*.zip)|*.7z;*.zip'
-        if ($ofd.ShowDialog() -eq 'OK' -and (Test-Path -LiteralPath $ofd.FileName)) {
-            $fi = Get-Item -LiteralPath $ofd.FileName
-            $mb2 = [math]::Round($fi.Length / 1MB, 1)
-            $kind2 = if ($fi.Name -like '*_Full_*') { '完整包' } else { '数据包' }
-            $ix = $candList.Add($fi)
-            [void]$list.Items.Add(('{0} ｜ {1} ｜ {2} MB（外部文件）' -f $fi.Name, $kind2, $mb2))
-            $list.SelectedIndex = $ix
+        $fbd = New-Object System.Windows.Forms.FolderBrowserDialog
+        $fbd.Description = '选择备份包所在的目录（自动记住上次选择）'
+        $fbd.ShowNewFolderButton = $false
+        $cur = [string](Get-BackupCfg).rdir
+        if ($cur -and (Test-Path -LiteralPath $cur)) { $fbd.SelectedPath = $cur }
+        if ($fbd.ShowDialog() -eq 'OK' -and (Test-Path -LiteralPath $fbd.SelectedPath)) {
+            $script:pickedRestoreDir = $fbd.SelectedPath
+            $n = & $addDirPkgs $fbd.SelectedPath '（外部目录）'
+            if ($n -gt 0) { $list.SelectedIndex = $list.Items.Count - $n }
+            else { Write-Log ('该目录里没有 Edge_Portable_*.7z / *.zip 备份包：' + $fbd.SelectedPath) 'warn' }
         }
-        $ofd.Dispose()
+        $fbd.Dispose()
     })
     $dlg.Controls.Add($btnExt)
 
@@ -3237,6 +3282,7 @@ function Invoke-RestoreBackup([switch]$Auto) {
     }
     else {
         $pick = Show-RestorePicker $pkgs
+        if ($script:pickedRestoreDir) { try { $cfgR = Get-BackupCfg; $cfgR.rdir = $script:pickedRestoreDir; Save-BackupCfg $cfgR; $script:pickedRestoreDir = '' } catch { } }
         if (-not $pick) { Write-Log '已取消恢复'; return }
     }
     $isFull = $pick.Name -like 'Edge_Portable_Full_*'
@@ -4819,6 +4865,11 @@ Write-Log ('面板已启动；包根：' + $pkgRoot)
 
 $form.ResumeLayout($false)
 [void]$form.ShowDialog()
+
+
+
+
+
 
 
 
