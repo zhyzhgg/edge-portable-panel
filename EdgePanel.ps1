@@ -2300,6 +2300,22 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $rb7z.Checked = (-not $useZip0)
     $rbZip.Checked = $useZip0
 
+    # 两个勾选项的体积按当前实际大小实时算（Edge 随版本变、面板 EXE 也会变），不写死
+    $panelMbTxt = '0.6'
+    try {
+        if ($env:EP_EXEPATH -and (Test-Path -LiteralPath $env:EP_EXEPATH)) {
+            $panelMbTxt = [string][math]::Round((Get-Item -LiteralPath $env:EP_EXEPATH).Length / 1MB, 1)
+            if ($panelMbTxt -eq '0') { $panelMbTxt = '0.6' }
+        }
+    } catch { }
+    $edgeMbTxt = ''
+    try {
+        $edgeDirDlg = Join-Path $pkgRoot 'Edge'
+        if (Test-Path -LiteralPath $edgeDirDlg) {
+            $edgeSum = (Get-ChildItem -LiteralPath $edgeDirDlg -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
+            if ($edgeSum -gt 0) { $edgeMbTxt = [string][math]::Round($edgeSum / 1MB) }
+        }
+    } catch { }
     # ── 第 3/4 行：面板程序（默认不勾，记忆上次）+ 浏览器程序（默认不勾，记忆上次）──
     $panelY = $fmtY + (S 28) + (S 6)
     $fullY = $panelY + (S 26) + (S 4)
@@ -2319,7 +2335,7 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $chkLblPanel.Size = New-Object System.Drawing.Size(($inner - (S 26)), (S 26))
     $chkLblPanel.TextAlign = 'MiddleLeft'
     $chkLblPanel.ForeColor = $clrText
-    $chkLblPanel.Text = '包含面板程序（约 +1 MB，换机解压可双击部署）'
+    $chkLblPanel.Text = '包含面板程序（' + $panelMbTxt + ' MB，换机解压可双击部署）'
     $chkLblPanel.Location = New-Object System.Drawing.Point(($pad + (S 22)), $panelY)
     $chkLblPanel.Add_Click({ $chkPanel.Checked = -not $chkPanel.Checked })
     $dlg.Controls.Add($chkLblPanel)
@@ -2339,12 +2355,12 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $chkLblFull.Size = New-Object System.Drawing.Size(($inner - (S 26)), (S 26))
     $chkLblFull.TextAlign = 'MiddleLeft'
     $chkLblFull.ForeColor = $clrText
-    $chkLblFull.Text = '包含浏览器程序（约 +218 MB，离线换机直接用）'
+    $chkLblFull.Text = $(if ($edgeMbTxt) { '包含浏览器程序（' + $edgeMbTxt + ' MB，离线换机直接用）' } else { '包含浏览器程序（本机还没有 Edge 程序）' })
     $chkLblFull.Location = New-Object System.Drawing.Point(($pad + (S 22)), $fullY)
     $chkLblFull.Add_Click({ $chkFull.Checked = -not $chkFull.Checked })
     $dlg.Controls.Add($chkLblFull)
 
-    $fullNoteText = '所有备份共用上方保留份数，按时间自动轮转。'
+    $fullNoteText = '备份会压缩，实际体积更小；各备份共用上方保留份数，按时间轮转。'
     $fullNoteY = $fullY + (S 26) + (S 2)
     $hFullNote = Get-TextHeight $fullNoteText $fontSmall $inner
     $fullNote = New-Object System.Windows.Forms.Label
@@ -4865,6 +4881,8 @@ Write-Log ('面板已启动；包根：' + $pkgRoot)
 
 $form.ResumeLayout($false)
 [void]$form.ShowDialog()
+
+
 
 
 
