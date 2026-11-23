@@ -765,10 +765,10 @@ function New-Note($parent, [int]$x, [int]$y, [int]$w, [int]$h, [string]$text) {
 
 # 统一 12px 模块间距网格（外边距 14px，左右卡各 415px，中缝 12px，内宽 387px）
 $gSlim = New-Group 14 168 415 160 '程序瘦身'
-$script:btnSlimAll  = New-Btn $gSlim 14  38 387 28 '一键瘦身' { Invoke-Action 'SlimAll' }
-$script:btnSlimOnly = New-Btn $gSlim 14  74 123 28 '仅删组件' { Invoke-Action 'SlimOnly' }
-$script:btnIniOff   = New-Btn $gSlim 146 74 123 28 '关闭组件更新' { Invoke-Action 'IniOff' }
-$script:btnIniOn    = New-Btn $gSlim 278 74 123 28 '恢复组件更新' { Invoke-Action 'IniOn' }
+$script:btnSlimAll  = New-Btn $gSlim 14  38 189 28 '一键瘦身' { Invoke-Action 'SlimAll' }
+$script:btnSlimOnly = New-Btn $gSlim 212 38 189 28 '仅删组件' { Invoke-Action 'SlimOnly' }
+$script:btnIniOff   = New-Btn $gSlim 14  74 189 28 '关闭组件更新' { Invoke-Action 'IniOff' }
+$script:btnIniOn    = New-Btn $gSlim 212 74 189 28 '恢复组件更新' { Invoke-Action 'IniOn' }
 [void](New-Note $gSlim 14 108 387 44 '移除约 380 项非核心组件（保留中/英语言包）、关闭组件更新并启用多线程下载，核心文件不动。')
 
 $gUpdate = New-Group 441 168 415 160 'Edge 更新'
@@ -2213,7 +2213,7 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $chkLblPanel.Size = New-Object System.Drawing.Size(($inner - (S 26)), (S 26))
     $chkLblPanel.TextAlign = 'MiddleLeft'
     $chkLblPanel.ForeColor = $clrText
-    $chkLblPanel.Text = '同时打包面板本体（约 +1 MB，换机解压双击即可部署 Edge）'
+    $chkLblPanel.Text = '附带面板本体（约 +1 MB）'
     $chkLblPanel.Location = New-Object System.Drawing.Point(($pad + (S 22)), $panelY)
     $chkLblPanel.Add_Click({ $chkPanel.Checked = -not $chkPanel.Checked })
     $dlg.Controls.Add($chkLblPanel)
@@ -2233,16 +2233,17 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $chkLblFull.Size = New-Object System.Drawing.Size(($inner - (S 26)), (S 26))
     $chkLblFull.TextAlign = 'MiddleLeft'
     $chkLblFull.ForeColor = $clrText
-    $chkLblFull.Text = '同时打包 Edge 本体（约 +218 MB，适合离线换机或重装）'
+    $chkLblFull.Text = '附带 Edge 本体（约 +218 MB，离线换机用）'
     $chkLblFull.Location = New-Object System.Drawing.Point(($pad + (S 22)), $fullY)
     $chkLblFull.Add_Click({ $chkFull.Checked = -not $chkFull.Checked })
     $dlg.Controls.Add($chkLblFull)
 
-    $fullNoteText = '面板本体只多约 1 MB：换机时解压双击它，点「更新并瘦身」就能就地装好 Edge。浏览器本体约 +218 MB，勾上得到离线完整包。三者共用上方「保留最近 N 份」额度，按时间倒序轮转。'
-    $fullNoteY = $fullY + (S 26)
+    $fullNoteText = '附带面板时换机解压双击即可部署 Edge；各类备份共用上方保留份数，按时间轮转。'
+    $fullNoteY = $fullY + (S 26) + (S 2)
     $hFullNote = Get-TextHeight $fullNoteText $fontSmall $inner
     $fullNote = New-Object System.Windows.Forms.Label
     $fullNote.AutoSize = $false
+    $fullNote.Font = $fontSmall
     $fullNote.Size = New-Object System.Drawing.Size($inner, ($hFullNote + (S 2)))
     $fullNote.Location = New-Object System.Drawing.Point($pad, $fullNoteY)
     $fullNote.ForeColor = $clrMuted
@@ -2793,10 +2794,11 @@ function Show-RestorePicker($packages) {
     $pad = S 16
     $inner = $w - 2 * $pad
     $dlg = New-DialogBase '从备份恢复' $w
-    $tipText = '选择要恢复的备份。数据包只恢复用户数据；完整包（含 Edge 本体）会连程序一起铺回来。'
+    $tipText = '选择要恢复的备份：数据包仅恢复用户数据；完整包会一并恢复 Edge 本体（不覆盖本机当前面板）。'
     $hTip = Get-TextHeight $tipText $fontSmall $inner
     $tip = New-Object System.Windows.Forms.Label
     $tip.AutoSize = $false
+    $tip.Font = $fontSmall
     $tip.Size = New-Object System.Drawing.Size($inner, ($hTip + (S 2)))
     $tip.Location = New-Object System.Drawing.Point($pad, $pad)
     $tip.ForeColor = $clrMuted
@@ -2827,7 +2829,7 @@ function Show-RestorePicker($packages) {
     }
     if ($list.Items.Count -gt 0) { $list.SelectedIndex = 0 }
 
-    [void](Add-DialogFooter $dlg $w ($lbY + (S 132)) '恢复这个' 'primary')
+    [void](Add-DialogFooter $dlg $w ($lbY + (S 132)) '开始恢复' 'primary')
     $res = $dlg.ShowDialog()
     $idx = $list.SelectedIndex
     $dlg.Dispose()
