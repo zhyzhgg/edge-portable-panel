@@ -207,6 +207,83 @@ function Show-Composition($rows, [string]$title) {
     }
 }
 
+# ---- 空间审计下钻：把 Extensions / IndexedDB 的大户翻译成人能看懂的名字（纯只读诊断）----
+function Resolve-ExtensionName([string]$extDir) {
+    # 大量扩展的 manifest.name 是 __MSG_xxx__ 占位符，必须去 _locales 里取真名；取不到落回扩展 ID
+    $mf = Get-ChildItem -LiteralPath $extDir -Recurse -Filter 'manifest.json' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $mf) { return $null }
+    try { $m = Get-Content -LiteralPath $mf.FullName -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return $null }
+    $n = [string]$m.name
+    if ($n -and $n -notmatch '^__MSG_(.+)__$') { return $n }
+    if ($n -match '^__MSG_(.+)__$') {
+        $key = $matches[1]
+        foreach ($lang in @('zh_CN', 'zh', 'en_US', 'en')) {
+            $mp = Join-Path $mf.Directory.FullName ('_locales\' + $lang + '\messages.json')
+            if (Test-Path -LiteralPath $mp) {
+                try {
+                    $j = Get-Content -LiteralPath $mp -Raw -Encoding UTF8 | ConvertFrom-Json
+                    $node = $j.$key
+                    if ($node -and $node.message) { return [string]$node.message }
+                } catch { }
+            }
+        }
+    }
+    return $null
+}
+
+function Get-ExtensionAudit([string]$dataDir, [int]$top = 5) {
+    $extRoot = Join-Path $dataDir 'Default\Extensions'
+    $lesRoot = Join-Path $dataDir 'Default\Local Extension Settings'
+    if (-not (Test-Path -LiteralPath $extRoot)) { return @() }
+    $rows = @()
+    foreach ($d in Get-ChildItem -LiteralPath $extRoot -Directory -Force -ErrorAction SilentlyContinue) {
+        $mb = Get-DirSizeMB $d.FullName
+        $les = Join-Path $lesRoot $d.Name
+        if (Test-Path -LiteralPath $les) { $mb += Get-DirSizeMB $les }   # 本体 + 该扩展的配置/规则库
+        $name = Resolve-ExtensionName $d.FullName
+        if (-not $name) { $name = $d.Name }
+        $rows += [pscustomobject]@{ Name = $name; MB = [math]::Round($mb, 1) }
+    }
+    return @($rows | Sort-Object MB -Descending | Select-Object -First $top)
+}
+
+function Get-SiteDataAudit([string]$dataDir, [int]$top = 5) {
+    $root = Join-Path $dataDir 'Default\IndexedDB'
+    if (-not (Test-Path -LiteralPath $root)) { return @() }
+    $agg = @{}
+    foreach ($d in Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue) {
+        if ($d.Name -like 'chrome-extension_*') { continue }        # 扩展库不进站点榜
+        $hostName = '（其它）'
+        if ($d.Name -match '^(?:https?|file)_(.+?)_\d+\.indexeddb\.') { $hostName = $matches[1] }
+        $s = (Get-ChildItem -LiteralPath $d.FullName -Recurse -Force -File -ErrorAction SilentlyContinue |
+              Measure-Object Length -Sum).Sum
+        if (-not $s) { $s = 0 }
+        if ($agg.ContainsKey($hostName)) { $agg[$hostName] += $s } else { $agg[$hostName] = [double]$s }
+    }
+    $rows = @()
+    foreach ($k in $agg.Keys) { $rows += [pscustomobject]@{ Host = $k; MB = [math]::Round($agg[$k] / 1MB, 1) } }
+    return @($rows | Sort-Object MB -Descending | Select-Object -First $top)
+}
+
+function Show-StorageAudit([string]$dataDir) {
+    # 纯只读：告诉用户大头是谁，绝不在清理脚本里删扩展或站点数据
+    $ext = @(Get-ExtensionAudit $dataDir 5)
+    if ($ext.Count -gt 0) {
+        Write-Host ''
+        Write-Host '扩展占用 Top 5（扩展本体 + 配置，只读诊断，本脚本不会删扩展）' -ForegroundColor DarkCyan
+        foreach ($r in $ext) { Write-Host ('  {0,8:N1} MB  {1}' -f $r.MB, $r.Name) -ForegroundColor DarkGray }
+    }
+    $site = @(Get-SiteDataAudit $dataDir 5)
+    if ($site.Count -gt 0) {
+        Write-Host ''
+        Write-Host '站点数据 Top 5（IndexedDB，只读诊断）' -ForegroundColor DarkCyan
+        foreach ($r in $site) { Write-Host ('  {0,8:N1} MB  {1}' -f $r.MB, $r.Host) -ForegroundColor DarkGray }
+    }
+    if ($ext.Count -gt 0 -or $site.Count -gt 0) {
+        Write-Host '（想减少占用：扩展去 edge://extensions 停用或卸载；站点数据去 edge://settings/content/all 或站点自己的设置里清）' -ForegroundColor DarkGray
+    }
+}
+
 # ---- 0. 环境自检 --------------------------------------------------------------
 if ([string]::IsNullOrWhiteSpace($Root)) { $Root = Find-PackageRoot $PSScriptRoot }
 if ([string]::IsNullOrWhiteSpace($Root)) { $Root = (Get-Location).Path }
@@ -313,6 +390,7 @@ Write-Host ''
 Write-Host ("预计可释放：" + $total + " MB") -ForegroundColor Cyan
 Write-Host '(书签 / 密码 / 历史 / 登录态 / 扩展本体 / 语言模型 都不在清单里，不会被动到)' -ForegroundColor DarkGray
 if (-not $Apply) { Show-Composition $compBefore '当前剩余构成（Top 5，本脚本不会动它们）' }
+if (-not $Apply) { Show-StorageAudit $data }
 
 if (-not $Apply) {
     # 机器可读行：只在预览时输出（面板靠它取数值，不依赖上文中文文案）。
@@ -329,12 +407,14 @@ if (-not $Apply) {
 # ---- 3. 执行 ----------------------------------------------------------------
 Write-Host ''
 $freed = 0.0
+$freedInData = 0.0
 $failed = @()
 foreach ($p in $plan | Where-Object { $_.State -eq '可清' }) {
     $sizeNow = Get-DirSizeMB $p.Full      # 执行前现算：预览与执行之间 Edge 可能又写了东西
     try {
         Remove-Item -LiteralPath $p.Full -Recurse -Force -ErrorAction Stop
         $freed += $sizeNow
+        if ($p.Full.StartsWith($data + '\', [System.StringComparison]::OrdinalIgnoreCase)) { $freedInData += $sizeNow }
         Write-Host ("  [OK]   " + $p.Rel + "  (-" + $sizeNow + " MB)") -ForegroundColor Green
     } catch {
         $failed += [pscustomobject]@{ Rel = $p.Rel; Error = $_.Exception.Message }
@@ -350,9 +430,9 @@ Write-Host ''
 Write-Host ("清理后：Data " + $after + " MB ；Cache " + $cacheAfter + " MB") -ForegroundColor Gray
 Write-Host ("实际释放：" + $freedR + " MB" + $(if ($failed.Count) { "（" + $failed.Count + " 项失败，通常是文件仍被占用）" } else { '' })) -ForegroundColor Cyan
 $delta = [math]::Round($before - $after, 1)
-if ([math]::Abs($delta - $freedR) -gt 1) {
+if ([math]::Abs($delta - ([math]::Round($freedInData, 1))) -gt 1) {
     # 差额不为 0 的四种可能，按可能性排序（不要一口咬定是某一种）
-    Write-Host ("（差额核对：Data 实际减少 " + $delta + " MB，清单合计 " + $freedR + " MB。常见原因：① 删除时个别文件仍被占用，只删掉一部分；② 目标里有父子路径重叠，重复计算；③ 后台仍有 msedge/msedgewebview2 在读写；④ 本脚本不碰、但 Edge 退出时自己清掉的缓存）") -ForegroundColor DarkGray
+    Write-Host ("（差额核对：Data 实际减少 " + $delta + " MB，清单里位于 Data 的合计 " + [math]::Round($freedInData, 1) + " MB（另有 " + [math]::Round($freedR - $freedInData, 1) + " MB 是 Data 之外的 Cache 目录）。常见原因：① 删除时个别文件仍被占用，只删掉一部分；② 目标里有父子路径重叠，重复计算；③ 后台仍有 msedge/msedgewebview2 在读写；④ 本脚本不碰、但 Edge 退出时自己清掉的缓存）") -ForegroundColor DarkGray
 }
 if ($failed.Count) {
     Write-Host '失败项：' -ForegroundColor Yellow
@@ -360,6 +440,7 @@ if ($failed.Count) {
     Write-Host '提示：完全退出 Edge 后重跑一次即可。' -ForegroundColor Yellow
 }
 Show-Composition $compAfter '清理后剩余构成（Top 5，这些是故意不动的）'
+Show-StorageAudit $data
 Write-Host ''
 Write-Host '重启 Edge 生效（缓存会随使用慢慢重建，属正常）。' -ForegroundColor DarkGray
 if (-not $Quiet) { [void](Read-Host '按回车退出') }

@@ -2039,10 +2039,9 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
             Write-Log ('校验中 ' + $idx2 + '/' + $pkgs2.Count + '：' + $pk2.Name + ' …')
             try { $lblHint.Text = ('校验 ' + $idx2 + '/' + $pkgs2.Count) } catch { }
             $kind2 = if ($pk2.Name -like '*_Full_*') { '完整包' } else { '数据包' }
-            $tArgs = @('t')
-            if ($pw2) { $tArgs += ('-p' + $pw2) }
-            $tArgs += $pk2.FullName
-            $r = Invoke-7zr $packer2 $tArgs $dirNow $null
+            # 密码走 stdin：t/l 不带 -p 时 7zr 会从 stdin 读；-p<密码> 在 PS 5.1 下遇引号/反斜杠会被拆坏参数（实测）
+            $tArgs = @('t', $pk2.FullName)
+            $r = Invoke-7zr $packer2 $tArgs $dirNow $pw2
             if ($r.Code -eq 0) {
                 $okN++
                 Write-Log ('  [正常] ' + $pk2.Name + '（' + $kind2 + '）') 'ok'
@@ -2528,19 +2527,17 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
                 [System.Windows.Forms.Application]::DoEvents()
             } catch { }
         }
-        $verifyArgs = @('t')
-        # 注意：7zr 只在 a(创建) 时读 stdin 密码；t / l 不读，只能用 -p<密码>（这两个动作 <1 秒，暴露窗口极小）
-        if ($pw) { $verifyArgs += @('-p' + $pw) }
-        $verifyArgs += @($tmp)
-        $vt = Invoke-7zr $packer $verifyArgs $pkgRoot $null
+        # 密码走 stdin（不带 -p 时 7zr 会从 stdin 读），避免 -p<密码> 被 PowerShell 拆坏
+        $verifyArgs = @('t', $tmp)
+        $vt = Invoke-7zr $packer $verifyArgs $pkgRoot $pw
         if ($vt.Code -ne 0) {
             Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
             Write-Log ('校验失败（7zr t 退出码 ' + $vt.Code + '），已删除临时包，旧备份未动') 'err'
             return $false
         }
         if ($pw) {
-            $listArgs = @('l', '-slt', ('-p' + $pw), $tmp)
-            $lt = Invoke-7zr $packer $listArgs $pkgRoot $null
+            $listArgs = @('l', '-slt', $tmp)
+            $lt = Invoke-7zr $packer $listArgs $pkgRoot $pw
             # 逐条解析：7-Zip 对 0 字节文件不做加密（没有内容可加密，Encrypted 记 -），
             # 所以断言只针对"非空文件"；空文件单独计数并在日志里说明，避免误判成加密失败。
             $raw = [string]$lt.Out
@@ -2616,10 +2613,9 @@ function Get-BackupPackages {
 
 function Test-ArchiveSafe([string]$path, [string]$pw, [string]$packer) {
     # 只读检查：能否打开 + 条目是否安全 + 顶层结构 + 解压后总大小
-    $args = @('l', '-slt')
-    if ($pw) { $args += ('-p' + $pw) }   # l 不读 stdin，只能用 -p（动作很短）
-    $args += @($path)
-    $r = Invoke-7zr $packer $args $pkgRoot $null
+    $args = @('l', '-slt', $path)
+    # 密码走 stdin：不带 -p 时 7zr 需要密码才读 stdin，对/错密码可区分（实测三种特殊字符均正常）
+    $r = Invoke-7zr $packer $args $pkgRoot $pw
     $out = @{ Ok = $false; Reason = ''; TotalBytes = 0; HasData = $false; HasEdge = $false }
     if ($r.Code -ne 0) {
         $out.Reason = if ($pw) { '密码不对，或者包已损坏' } else { '包打不开（可能需要密码，或已损坏）' }
