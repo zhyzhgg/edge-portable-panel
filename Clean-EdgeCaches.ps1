@@ -70,6 +70,9 @@ $targets = @(
     @{ Rel = 'Data\DeferredBrowserMetrics';              Note = '延迟诊断指标' }
     @{ Rel = 'Data\BrowserMetrics-spare.pma';            Note = '指标包备用文件 4MB（写满转正式包并重建，常态存在）' }
     @{ Rel = 'Data\Default\Password_Diagnostics';        Note = '密码诊断日志' }
+    @{ Rel = 'Data\Crashpad\reports';                    Note = '崩溃转储（仅崩溃后才会长出来，单个 .dmp 可达数十 MB）' }
+    @{ Rel = 'Data\Crashpad\attachments';                Note = '崩溃附件' }
+    @{ Rel = 'Data\Crashpad\pending';                    Note = '待上报的崩溃转储' }
 
     # —— Chromium 内部统计与特征库（纯可再生，无用户数据）——
     @{ Rel = 'Data\Default\Site Characteristics Database'; Note = '站点特征库' }
@@ -100,11 +103,11 @@ $targets = @(
     @{ Rel = 'Data\OneAuth\WebView2\EBWebView\Default\GPUCache'; Note = '同上（WebView2 GPU 缓存）' }
 
     # —— 纯统计 / 诊断日志（可再生，无用户数据；支持通配）——
-    @{ Rel = 'Data\Default\load_statistics.db';                  Note = '站点加载耗时统计库（Edge 会自动重建）' }
+    @{ Rel = 'Data\Default\load_statistics.db*';                 Note = '站点加载耗时统计库（含 -wal/-shm/-journal 伴生文件，Edge 自动重建）' }
     @{ Rel = 'Data\Default\*_diagnostic.log*';                   Note = '设置/收藏夹同步诊断日志（纯文本，实测约 0.9 MB）' }
 )
 # 故意不列入（有副作用 / 含状态，删了会重新弹提示、重新下载或丢配置）：
-#   Data\Crashpad                          崩溃转储目录；实测仅 308B 元数据，清它没收益
+#   Data\Crashpad\metadata / settings.dat 留着；只清 reports/attachments/pending（崩溃后才会有大文件，平时 0 字节）
 #   Data\Safe Browsing / SmartScreen       安全防护本地库；删了会重新下载且期间校验降级
 #   Data\Default\Safe Browsing Network     同上
 #   Data\DualEngine                        IE 模式站点列表（是配置不是缓存）
@@ -118,7 +121,7 @@ $targets = @(
 
 # ---- 绝不允许被删的（防御：目标路径里出现这些名字直接拒绝）---------------------
 $protected = @(
-    'Bookmarks', 'Login Data', 'History', 'Local State', 'Preferences', 'Secure Preferences',
+    'Bookmarks', 'Login Data', 'Login Data For Account', 'History', 'Local State', 'Preferences', 'Secure Preferences',
     'Cookies', 'Network', 'Extensions', 'IndexedDB', 'Local Storage', 'Session Storage',
     'Web Data', 'Favicons', 'Top Sites', 'Shortcuts', 'Managed Search Engines',
     'EdgeLite.mark', 'chrome++.ini', 'msedge.exe'
@@ -141,7 +144,9 @@ function Test-ProtectedPath([string]$full, [string]$root) {
     $segs = @($rel -split '\\')
     foreach ($name in $protected) {
         if ($segs -contains $name) { return $name }
-        if ($segs.Count -gt 0 -and $segs[-1] -like ($name + '*')) { return $name }
+        # 只认「同名 + .后缀 / -后缀」的文件变体（Bookmarks.bak、Cookies-journal），
+        # 不能用 $name + '*'：那会把 extensions_crx_cache 误判成 Extensions 家族而拒绝清理
+        if ($segs.Count -gt 0 -and $segs[-1] -match ('^' + [regex]::Escape($name) + '([-.]|$)')) { return $name }
     }
     return $null
 }
@@ -150,7 +155,7 @@ function Test-ProtectedPath([string]$full, [string]$root) {
 $script:whyKeep = @{
     'Extensions'               = '扩展本体（程序文件）'
     'IndexedDB'                = '站点/扩展数据库（删 = 清站点数据）'
-    'Local Extension Settings' = '扩展配置与规则库（uBlock 规则、油猴脚本）'
+    'Local Extension Settings' = '扩展配置与规则库（过滤规则、脚本与站点配置）'
     'Local Storage'            = '站点偏好与非 Cookie 登录态'
     'Service Worker'           = '含 ScriptCache，删了 MV3 扩展罢工'
     'Network'                  = 'Cookie 与网络状态库'
@@ -307,7 +312,7 @@ $total = [math]::Round((($plan | Where-Object { $_.State -eq '可清' } | Measur
 Write-Host ''
 Write-Host ("预计可释放：" + $total + " MB") -ForegroundColor Cyan
 Write-Host '(书签 / 密码 / 历史 / 登录态 / 扩展本体 / 语言模型 都不在清单里，不会被动到)' -ForegroundColor DarkGray
-Show-Composition $compBefore '当前剩余构成（Top 5，本脚本不会动它们）'
+if (-not $Apply) { Show-Composition $compBefore '当前剩余构成（Top 5，本脚本不会动它们）' }
 
 if (-not $Apply) {
     # 机器可读行：只在预览时输出（面板靠它取数值，不依赖上文中文文案）。
@@ -345,8 +350,9 @@ Write-Host ''
 Write-Host ("清理后：Data " + $after + " MB ；Cache " + $cacheAfter + " MB") -ForegroundColor Gray
 Write-Host ("实际释放：" + $freedR + " MB" + $(if ($failed.Count) { "（" + $failed.Count + " 项失败，通常是文件仍被占用）" } else { '' })) -ForegroundColor Cyan
 $delta = [math]::Round($before - $after, 1)
-if ($delta -gt ($freedR + 1)) {
-    Write-Host ("（附带说明：Data 总量比清理前少 " + $delta + " MB，多于清单里的 " + $freedR + " MB，差额是 Edge 自己清掉的）") -ForegroundColor DarkGray
+if ([math]::Abs($delta - $freedR) -gt 1) {
+    # 差额不为 0 的四种可能，按可能性排序（不要一口咬定是某一种）
+    Write-Host ("（差额核对：Data 实际减少 " + $delta + " MB，清单合计 " + $freedR + " MB。常见原因：① 删除时个别文件仍被占用，只删掉一部分；② 目标里有父子路径重叠，重复计算；③ 后台仍有 msedge/msedgewebview2 在读写；④ 本脚本不碰、但 Edge 退出时自己清掉的缓存）") -ForegroundColor DarkGray
 }
 if ($failed.Count) {
     Write-Host '失败项：' -ForegroundColor Yellow
