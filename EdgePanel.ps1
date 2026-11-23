@@ -2325,9 +2325,8 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
             if ($edgeSum -gt 0) { $edgeMbTxt = [string][math]::Round(($edgeSum / 1MB) * $edgeRatio) }
         }
     } catch { }
-    # ── 第 3/4 行：面板程序（默认不勾，记忆上次）+ 浏览器程序（默认不勾，记忆上次）──
-    $panelY = $fmtY + (S 28) + (S 6)
-    $fullY = $panelY + (S 26) + (S 4)
+    # ── 同一行：面板程序 + 浏览器程序（两个独立可选项，默认不勾，记忆上次）──
+    $rowY = $fmtY + (S 28) + (S 6)
 
     $chkPanel = New-Object System.Windows.Forms.CheckBox
     $chkPanel.Text = ''
@@ -2336,18 +2335,19 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $chkPanel.Size = New-Object System.Drawing.Size((S 20), (S 26))
     $chkPanel.Checked = [bool]$cfg.panel
     $chkPanel.ForeColor = $clrText
-    $chkPanel.Location = New-Object System.Drawing.Point(($pad + (S 2)), $panelY)
+    $chkPanel.Location = New-Object System.Drawing.Point(($pad + (S 2)), $rowY)
     $dlg.Controls.Add($chkPanel)
 
     $chkLblPanel = New-Object System.Windows.Forms.Label
     $chkLblPanel.AutoSize = $false
-    $chkLblPanel.Size = New-Object System.Drawing.Size(($inner - (S 26)), (S 26))
     $chkLblPanel.TextAlign = 'MiddleLeft'
     $chkLblPanel.ForeColor = $clrText
-    $chkLblPanel.Text = '包含面板程序（压缩后约 +' + $panelMbTxt + ' MB，换机解压可双击部署）'
-    $chkLblPanel.Location = New-Object System.Drawing.Point(($pad + (S 22)), $panelY)
+    $chkLblPanel.Text = '包含面板程序'
+    $chkLblPanel.Size = New-Object System.Drawing.Size([int]([System.Windows.Forms.TextRenderer]::MeasureText($chkLblPanel.Text, $fontBase).Width + (S 4)), (S 26))
+    $chkLblPanel.Location = New-Object System.Drawing.Point(($pad + (S 22)), $rowY)
     $chkLblPanel.Add_Click({ $chkPanel.Checked = -not $chkPanel.Checked })
     $dlg.Controls.Add($chkLblPanel)
+
     # 勾选框只画方块、文字交给同高的独立 Label —— 两者都在 26px 行内垂直居中，彻底消除基线偏差
     $chkFull = New-Object System.Windows.Forms.CheckBox
     $chkFull.Text = ''
@@ -2356,21 +2356,30 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $chkFull.Size = New-Object System.Drawing.Size((S 20), (S 26))
     $chkFull.Checked = [bool]$cfg.full
     $chkFull.ForeColor = $clrText
-    $chkFull.Location = New-Object System.Drawing.Point(($pad + (S 2)), $fullY)
+    $chkFull.Location = New-Object System.Drawing.Point([int]($chkLblPanel.Right + (S 14)), $rowY)
     $dlg.Controls.Add($chkFull)
 
     $chkLblFull = New-Object System.Windows.Forms.Label
     $chkLblFull.AutoSize = $false
-    $chkLblFull.Size = New-Object System.Drawing.Size(($inner - (S 26)), (S 26))
     $chkLblFull.TextAlign = 'MiddleLeft'
     $chkLblFull.ForeColor = $clrText
-    $chkLblFull.Text = $(if ($edgeMbTxt) { '包含浏览器程序（压缩后约 +' + $edgeMbTxt + ' MB，离线换机直接用）' } else { '包含浏览器程序（本机还没有 Edge 程序）' })
-    $chkLblFull.Location = New-Object System.Drawing.Point(($pad + (S 22)), $fullY)
+    $chkLblFull.Text = $(if ($edgeMbTxt) { '包含浏览器程序（压缩后约 +' + $edgeMbTxt + ' MB）' } else { '包含浏览器程序（本机还没有 Edge 程序）' })
+    $wLblFull = [System.Windows.Forms.TextRenderer]::MeasureText($chkLblFull.Text, $fontBase).Width + (S 4)
+    $wLblFullMax = $inner - ($chkFull.Left - $pad)
+    if ($wLblFull -gt $wLblFullMax) { $wLblFull = $wLblFullMax }
+    $chkLblFull.Size = New-Object System.Drawing.Size([int]$wLblFull, (S 26))
+    $chkLblFull.Location = New-Object System.Drawing.Point([int]($chkFull.Right + (S 2)), $rowY)
     $chkLblFull.Add_Click({ $chkFull.Checked = -not $chkFull.Checked })
     $dlg.Controls.Add($chkLblFull)
 
+    # 括号里省掉的“换机用途”放进悬停提示，信息不丢
+    $script:tip.SetToolTip($chkLblPanel, '把面板 EXE 一起打包：换机时解压双击它就能就地部署 Edge')
+    $script:tip.SetToolTip($chkPanel, '把面板 EXE 一起打包：换机时解压双击它就能就地部署 Edge')
+    $script:tip.SetToolTip($chkLblFull, '把整份 Edge 程序一起打包，适合离线换机或重装')
+    $script:tip.SetToolTip($chkFull, '把整份 Edge 程序一起打包，适合离线换机或重装')
+
     $fullNoteText = '所有备份共用上方保留份数，按时间自动轮转。'
-    $fullNoteY = $fullY + (S 26) + (S 2)
+    $fullNoteY = $rowY + (S 26) + (S 2)
     $hFullNote = Get-TextHeight $fullNoteText $fontSmall $inner
     $fullNote = New-Object System.Windows.Forms.Label
     $fullNote.AutoSize = $false
