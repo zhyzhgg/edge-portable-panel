@@ -10,6 +10,8 @@
 $ErrorActionPreference = 'Stop'
 $script:panelVersion = '1.3.6'
 $script:panelUpdateRepo = 'zhyzhgg/edge-portable-panel'   # 自更新源（公开仓库 Releases）
+# 面板 EXE 的标准名：打包判定 / 恢复白名单 / 恢复提示三处共用，避免口径分裂
+$script:panelExeNameRe = '^(?i)(EdgePanel|Edge面板)\.exe$'
 $script:panelProbePs = $null
 $script:panelProbeRs = $null
 $script:panelProbeHandle = $null
@@ -2448,10 +2450,14 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
             # 完整包：Data\ + Edge\（排除更新暂存目录 _old）+ 面板自身 EXE，换机时解压即用
             $argList += @($tmp, 'Data', 'Edge', '-x!Edge\_old', '-x!Edge\_old\*')
             $selfExe = Get-PanelExePath
-            if ($selfExe -and ((Split-Path -Parent $selfExe).TrimEnd('\') -eq $pkgRoot.TrimEnd('\'))) {
-                $selfName = Split-Path -Leaf $selfExe
+            $selfName = if ($selfExe) { Split-Path -Leaf $selfExe } else { '' }
+            $inPkg = $selfExe -and ((Split-Path -Parent $selfExe).TrimEnd('\') -eq $pkgRoot.TrimEnd('\'))
+            if ($inPkg -and ($selfName -match $script:panelExeNameRe)) {
                 $argList += $selfName
                 Write-Log ('完整包同时打包面板自身：' + $selfName) 'ok'
+            } elseif ($inPkg) {
+                # 与恢复侧白名单保持同一口径：非标准名不打进去，免得打进去却在恢复时被拒
+                Write-Log ('面板文件名不在白名单（' + $selfName + '），未打入完整包；想换机一包齐请改名为 EdgePanel.exe 或 Edge面板.exe') 'warn'
             } elseif ($selfExe) {
                 Write-Log ('面板不在包根（' + $selfExe + '），未打入完整包') 'warn'
             }
@@ -2659,7 +2665,7 @@ function Test-ArchiveSafe([string]$path, [string]$pw, [string]$packer) {
         if ($top) { $tops[$top] = $true }
     }
     # 完整包可能带一份面板 EXE（换机时解压即用）：只放行已知的两个名字，其它顶层项一律拒收
-    $bad = @($tops.Keys | Where-Object { $_ -ne 'Data' -and $_ -ne 'Edge' -and $_ -notmatch '^(?i)(EdgePanel|Edge面板)\.exe$' })
+    $bad = @($tops.Keys | Where-Object { $_ -ne 'Data' -and $_ -ne 'Edge' -and $_ -notmatch $script:panelExeNameRe })
     if ($bad.Count -gt 0) {
         $out.Reason = ('包顶层不是 Data/Edge（发现：' + ($bad -join '、') + '），不像是本面板生成的备份')
         return $out
@@ -2814,7 +2820,7 @@ function Invoke-RestoreBackup([switch]$Auto) {
         }
         Write-Log ('恢复[4/7] 解压完成（已用 ' + [math]::Round($swRestore.Elapsed.TotalSeconds, 1) + ' 秒）')
         # 完整包里可能带了一份面板 EXE：只提示、不覆盖（本机正在运行、且可能比包里新）
-        $tmpExe = @(Get-ChildItem -LiteralPath $tmp -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(?i)(EdgePanel|Edge面板)\.exe$' })
+        $tmpExe = @(Get-ChildItem -LiteralPath $tmp -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match $script:panelExeNameRe })
         if ($tmpExe.Count -gt 0) {
             Write-Log ('包里带面板 ' + $tmpExe[0].Name + '（' + [math]::Round($tmpExe[0].Length / 1MB, 1) + ' MB）：本机保留当前面板不覆盖；换机时可直接从包里取出这个 EXE 使用') 'warn'
         }
