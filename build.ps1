@@ -72,6 +72,10 @@ foreach ($rel in $resources.Keys) {
         if ($bytes.Length -lt 3 -or $bytes[0] -ne 0xEF -or $bytes[1] -ne 0xBB -or $bytes[2] -ne 0xBF) {
             throw "编码错误（缺少 UTF-8 BOM，PS 5.1 会把中文读成乱码）：$rel"
         }
+        # 只允许一个 BOM：补 BOM 时重复写入会让 PS 5.1 把第二个 BOM 当成命令名，每次启动刷一行报错
+        if ($bytes.Length -ge 6 -and $bytes[3] -eq 0xEF -and $bytes[4] -eq 0xBB -and $bytes[5] -eq 0xBF) {
+            throw "编码错误（UTF-8 BOM 重复，文件头有两个 BOM）：$rel"
+        }
         $tokens = $null; $errs = $null
         [void][System.Management.Automation.Language.Parser]::ParseFile($p, [ref]$tokens, [ref]$errs)
         if ($errs -and $errs.Count -gt 0) {

@@ -1,4 +1,4 @@
-﻿﻿
+﻿
 #Requires -Version 5.1
 <#
     便携 Edge 面板 —— 单文件 EXE（csc 宿主内嵌全部脚本；本文件即 EdgePanel.ps1）
@@ -510,6 +510,7 @@ $form.Add_FormClosing({
     # 打包中的 7zr 是独立进程，Kill 防孤儿继续写 .tmp
     if ($script:backupProc -and -not $script:backupProc.HasExited) { try { $script:backupProc.Kill() } catch { } }
     if ($script:policyWatch) { try { $script:policyWatch.Stop(); $script:policyWatch.Dispose() } catch { } }
+    if ($script:startupPromptTimer) { try { $script:startupPromptTimer.Stop(); $script:startupPromptTimer.Dispose() } catch { }; $script:startupPromptTimer = $null }
     foreach ($tm in @($script:panelProbeDelay, $script:panelProbeTimer)) { if ($tm) { try { $tm.Stop(); $tm.Dispose() } catch { } } }
     $script:panelProbeDelay = $null; $script:panelProbeTimer = $null
     if ($script:panelProbeCancel) { try { $script:panelProbeCancel['Stop'] = $true } catch { } }
@@ -1261,9 +1262,11 @@ function Set-UpdateHighlight([bool]$on) {
     # 有新版：按钮变绿并解锁；没新版/查询失败：恢复普通样式并锁回
     if (-not $script:btnUpdateSlim) { return }
     Set-BtnState $script:btnUpdateSlim $on $clrGo $(if ($on) { '更新并瘦身 →' } else { '更新并瘦身' })
-    # 静默自动检查不会走 Set-Busy，所以这里必须自己把按钮解锁/锁回
-    if ($script:btnUpdate) { $script:btnUpdate.Enabled = $on }
-    $script:btnUpdateSlim.Enabled = $on
+    # 静默自动检查不会走 Set-Busy，所以这里必须自己把按钮解锁/锁回；但长任务进行中（isBusy）不许提前解锁
+    if (-not $script:isBusy) {
+        if ($script:btnUpdate) { $script:btnUpdate.Enabled = $on }
+        $script:btnUpdateSlim.Enabled = $on
+    }
 }
 
 function Set-CleanButtonState([bool]$highlight) {
@@ -1652,7 +1655,7 @@ function Start-PolicyWatch {
         $hasUi = @($bad | Where-Object { $script:upstreamUiPolicies -contains $_ })
         $why2 = @()
         if ($noUi.Count -gt 0) { $why2 += ('· ' + ($noUi -join '、') + ' —— 上游没有这个开关，必被删掉') }
-        if ($hasUi.Count -gt 0) { $why2 += ('· ' + ($hasUi -join '、') + ' —— 上游有开关；若是你刚在上面主动关的，选「不用了」即可') }
+        if ($hasUi.Count -gt 0) { $why2 += ('· ' + ($hasUi -join '、') + ' —— 上游有开关；若是你刚在上面主动关的，选「暂不处理」即可') }
         $msg = ("上游策略工具重写注册表后，以下推荐策略未保留：`r`n`r`n" + ($why2 -join "`r`n") + "`r`n`r`n是否立即补回？（仅写入上述条目，其他策略不变，需 UAC 确认）")
         if (Show-DialogAsk '检测到专属策略被覆盖' $msg '立即补回' '暂不处理') {
             [void](Restore-ExtraPolicies $bad)
@@ -2930,6 +2933,8 @@ function Invoke-Action([string]$kind) {
 
 function Open-PolicyGui {
     if (-not (Test-Path $runZh)) { Write-Log ('找不到 ' + $runZh) 'err'; return }
+    # 防重入：连点两次会起两个 run-zh → 两次 UAC
+    if ($script:policyGuiProc) { try { if (-not $script:policyGuiProc.HasExited) { Write-Log '策略管理窗口已经打开，请先在它里面操作' 'warn'; return } } catch { } }
     try {
         $env:EP_THEME = if ($script:isDark) { 'dark' } else { 'light' }
         # 上游策略 GUI 会自己提权重启，环境变量在提权后丢失 ⇒ 再写一份跨提权可读的主题文件
@@ -3214,7 +3219,7 @@ function Complete-Check([string]$jsonText) {
     $silent = $script:chkSilent
     $script:chkSilent = $false
     if (-not $silent) { Set-Busy $false }
-    else { $lblHint.Text = '就绪'; $lblHint.ForeColor = $clrOnDarkMuted }
+    else { if (-not $script:isBusy) { $lblHint.Text = '就绪'; $lblHint.ForeColor = $clrOnDarkMuted } }
     Apply-CheckResult $jsonText
 }
 
@@ -4149,6 +4154,7 @@ $form.Add_Shown({
         $script:startupPromptTimer.Interval = 300
         $script:startupPromptTimer.Add_Tick({
             $script:startupPromptTimer.Stop()
+            if ($script:closeRequested -or $form.IsDisposed) { return }
             $script:startupPromptTimer.Dispose()
             if ($env:EP_NO_PROMPT -eq '1') { return }
             $running = @(Get-PackageProcs)

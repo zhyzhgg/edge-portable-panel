@@ -60,7 +60,7 @@
   "UrlDiagnosticDataEnabled": { "what": "把访问的网址上报给微软做诊断", "effect": "不上报", "advice": "建议勾选：纯隐私" },
   "VisualSearchEnabled": { "what": "图片右键的视觉搜索（以图找同款）", "effect": "关闭", "advice": "看你习惯：不用就勾" },
 
-  "AllowBrowsingWithCopilot": { "what": "选中网页内容后「对页面提问」调用 Copilot", "effect": "禁止", "advice": "建议勾选：你已决定不用 AI" },
+  "AllowBrowsingWithCopilot": { "what": "选中网页内容后「对页面提问」调用 Copilot", "effect": "禁止", "advice": "Edge 159 起已过时，可不勾选" },
   "BuiltInAIAPIsEnabled": { "what": "网页可以调用浏览器内置的 AI 接口（window.ai 之类）", "effect": "禁止网页调用", "advice": "建议勾选：减少本地 AI 能力暴露" },
   "ComposeInlineEnabled": { "what": "写作助手（把选中的文字重写/扩写）", "effect": "关闭", "advice": "建议勾选：用不到" },
   "CopilotAddressBarSuggestionsEnabled": { "what": "地址栏里的 Copilot 建议", "effect": "关闭", "advice": "建议勾选" },
