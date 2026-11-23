@@ -95,3 +95,113 @@ function Get-ZhWorkDir([string]$fallbackBase) {
     }
     return (Join-Path $fallbackBase 'work')
 }
+function Test-PortableEdgeDir([string]$dir) {
+    <#  判断目录是否为本项目的便携 Edge 目录（严防误认系统原版 Edge）：
+        ① 排除 Windows / Program Files 等系统目录；
+        ② 必须同时存在 Edge\msedge.exe + Edge\version.dll + Edge\chrome++.ini。 #>
+    if ([string]::IsNullOrWhiteSpace($dir)) { return $false }
+    try {
+        $full = [System.IO.Path]::GetFullPath($dir).TrimEnd('\')
+        foreach ($sys in @($env:SystemRoot, $env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+            if ($sys) {
+                $sp = $sys.TrimEnd('\')
+                if ($full.Equals($sp, [System.StringComparison]::OrdinalIgnoreCase) -or
+                    $full.StartsWith($sp + '\', [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+            }
+        }
+        return ((Test-Path -LiteralPath (Join-Path $full 'Edge\msedge.exe')) -and
+                (Test-Path -LiteralPath (Join-Path $full 'Edge\version.dll')) -and
+                (Test-Path -LiteralPath (Join-Path $full 'Edge\chrome++.ini')))
+    } catch { return $false }
+}
+
+function Find-PortableEdgeDirs([string]$lastSaved = '') {
+    <#  快速发现本机便携 Edge 目录（<0.3s，不扫全盘）：
+        依次检查 上次记住路径 -> 运行中的便携 msedge -> 固定盘符 1-2 层常见目录 -> 用户目录/桌面。 #>
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $found = New-Object System.Collections.ArrayList
+    $addIf = {
+        param([string]$cand)
+        if ([string]::IsNullOrWhiteSpace($cand)) { return }
+        try {
+            $full = [System.IO.Path]::GetFullPath($cand).TrimEnd('\')
+            if ($seen.Contains($full)) { return }
+            if (Test-PortableEdgeDir $full) {
+                [void]$seen.Add($full)
+                [void]$found.Add($full)
+            }
+        } catch { }
+    }
+    if ($lastSaved) { & $addIf $lastSaved }
+    # 运行中的便携 msedge 进程
+    try {
+        foreach ($pr in @(Get-Process -Name msedge -ErrorAction SilentlyContinue)) {
+            try {
+                if ($pr.Path) {
+                    $eDir = Split-Path -Parent $pr.Path
+                    if ((Split-Path -Leaf $eDir) -ieq 'Edge') { & $addIf (Split-Path -Parent $eDir) }
+                }
+            } catch { }
+        }
+    } catch { }
+    $skipNames = @('Windows', 'Program Files', 'Program Files (x86)', 'ProgramData', '$Recycle.Bin', 'System Volume Information', 'Recovery', 'PerfLogs')
+    $subContainers = @('App', 'Apps', 'Tools', 'Portable', 'Software', 'Program', 'Programs', 'Green', 'DevTools')
+    foreach ($drv in @([System.IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' -and $_.IsReady })) {
+        $root = $drv.RootDirectory.FullName
+        foreach ($d1 in @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue)) {
+            if ($skipNames -contains $d1.Name) { continue }
+            & $addIf $d1.FullName
+            if ($subContainers -contains $d1.Name) {
+                foreach ($d2 in @(Get-ChildItem -LiteralPath $d1.FullName -Directory -ErrorAction SilentlyContinue)) {
+                    & $addIf $d2.FullName
+                }
+            }
+        }
+    }
+    foreach ($uRoot in @($env:USERPROFILE, [Environment]::GetFolderPath('Desktop'))) {
+        if ($uRoot -and (Test-Path -LiteralPath $uRoot)) {
+            foreach ($d in @(Get-ChildItem -LiteralPath $uRoot -Directory -ErrorAction SilentlyContinue)) {
+                & $addIf $d.FullName
+            }
+        }
+    }
+    return @($found)
+}
+function Find-PortableEdgeDirsDeep([int]$maxDepth = 4, [scriptblock]$onProgress = $null) {
+    <#  全机固定盘符深度搜索便携 Edge（最多 4 层，跳过系统/开发噪声目录，不进入已命中目录内部）。
+        onProgress 回调接收当前扫描路径，供进度窗实时刷新并调用 DoEvents 防假死。 #>
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $found = New-Object System.Collections.ArrayList
+    $skip = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($n in @('Windows', 'Program Files', 'Program Files (x86)', 'ProgramData', '$Recycle.Bin',
+                     'System Volume Information', 'Recovery', 'PerfLogs', 'WinSxS', 'node_modules',
+                     '.git', '.venv', 'venv', '__pycache__', 'Temp', 'Cache', 'Packages', 'Intel', 'AMD', 'NVIDIA')) {
+        [void]$skip.Add($n)
+    }
+    $q = New-Object 'System.Collections.Generic.Queue[object]'
+    foreach ($drv in @([System.IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' -and $_.IsReady })) {
+        $q.Enqueue([pscustomobject]@{ Path = $drv.RootDirectory.FullName.TrimEnd('\'); Depth = 0 })
+    }
+    $visited = 0
+    while ($q.Count -gt 0) {
+        $cur = $q.Dequeue()
+        $p = $cur.Path
+        $dep = $cur.Depth
+        $visited++
+        if ($onProgress -and ($visited % 20 -eq 0)) {
+            $cont = & $onProgress $p $visited $found.Count
+            if ($cont -eq $false) { break }
+        }
+        if ($dep -gt 0 -and (Test-PortableEdgeDir $p)) {
+            if (-not $seen.Contains($p)) { [void]$seen.Add($p); [void]$found.Add($p) }
+            continue
+        }
+        if ($dep -ge $maxDepth) { continue }
+        $scanRoot = if ($dep -eq 0) { $p + '\' } else { $p }
+        foreach ($sub in @(Get-ChildItem -LiteralPath $scanRoot -Directory -ErrorAction SilentlyContinue)) {
+            if ($skip.Contains($sub.Name) -or $sub.Name.StartsWith('$')) { continue }
+            $q.Enqueue([pscustomobject]@{ Path = $sub.FullName; Depth = ($dep + 1) })
+        }
+    }
+    return @($found)
+}

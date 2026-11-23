@@ -159,6 +159,13 @@ foreach ($scale in $Scales) {
     }
     Remove-Item Env:EP_RUNONCE -ErrorAction SilentlyContinue
 
+    # 先把鼠标挪开：面板恰好出现在光标下时会弹 ToolTip（如"应用推荐策略"的长提示），
+    # 它会被 UIA 当子节点枚举成"越界/重叠"，属纯测试噪声
+    try {
+        $oldPos = [System.Windows.Forms.Cursor]::Position
+        [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(2, 2)
+        Start-Sleep -Milliseconds 120
+    } catch { $oldPos = $null }
     $p = Start-Process -FilePath $Exe -PassThru
     $hwnd = Get-PanelHwnd $p.Id 15
     if ($hwnd -eq [IntPtr]::Zero) { Write-Host "[FAIL] $scale× 没等到窗口" -ForegroundColor Red; $failTotal++; if (-not $NoKill) { Stop-AuditProc $p.Id }; continue }
@@ -178,9 +185,16 @@ foreach ($scale in $Scales) {
         $winL = [int]$wr.Left; $winT = [int]$wr.Top
         $winW = [int]$wr.Width; $winH = [int]$wr.Height
         $items = Get-Descendants $win
+        # 过滤掉 ToolTip 窗口：它是 form 的拥有窗口，UIA 会把它当子节点枚举出来，
+        # 长文案 tooltip 会被误判成"控件越界/重叠"（纯测试工具噪声，不是界面缺陷）
         $nodes = @($items | Where-Object {
                 $r = $_.El.Current.BoundingRectangle
-                $r.Width -gt 0 -and $r.Height -gt 0 -and -not $_.El.Current.IsOffscreen
+                $cls = ''
+                try { $cls = [string]$_.El.Current.ClassName } catch { }
+                $ct = ''
+                try { $ct = [string]$_.El.Current.ControlType.ProgrammaticName } catch { }
+                $r.Width -gt 0 -and $r.Height -gt 0 -and -not $_.El.Current.IsOffscreen -and
+                $cls -ne 'tooltips_class32' -and $ct -ne 'ControlType.ToolTip'
             })
 
         foreach ($n in $nodes) {

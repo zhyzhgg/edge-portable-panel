@@ -63,7 +63,7 @@ Get-FileHash .\EdgePanel.exe -Algorithm SHA256
 
 ## 从源码构建（3 步）
 
-1. 下载 [7-Zip 官方 7zr.exe](https://www.7-zip.org/a/7zr.exe)（Public Domain），放到仓库 `tools\7zr.exe`。
+1. 下载 [7-Zip 官方 7zr.exe](https://www.7-zip.org/a/7zr.exe)（Public Domain），放到仓库 `tools\7zr.exe`；若能再放入官方 `tools\7za.exe`（7-Zip Extra 包内，x86 版约 855 KB），编译时会优先内嵌它，备份弹窗里才会出现 `zip` 格式选项（Win10/11 自带解压可直接打开）。
 2. 双击 `一键编译.bat`，或在仓库目录执行：
 
 ```powershell

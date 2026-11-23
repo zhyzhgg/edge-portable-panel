@@ -635,9 +635,19 @@ $lblSub.Size = New-Object System.Drawing.Size((S 390), (S 20))
 $lblSub.Location = New-Object System.Drawing.Point((S 20), (S 44))
 $header.Controls.Add($lblSub)
 $lblSub.Cursor = 'Hand'
-$lblSub.Add_DoubleClick({ try { Start-Process explorer.exe -ArgumentList ('"' + $pkgRoot + '"') } catch { } })
+$lblSub.Add_Click({
+    param($s, $e)
+    if ($e -is [System.Windows.Forms.MouseEventArgs] -and $e.Button -ne [System.Windows.Forms.MouseButtons]::Left) { return }
+    try { Start-Process explorer.exe -ArgumentList ('"' + $pkgRoot + '"') } catch { }
+})
 $lblSub.Add_MouseEnter({ $lblSub.ForeColor = $clrHeaderAccent })
 $lblSub.Add_MouseLeave({ $lblSub.ForeColor = $clrOnDarkMuted })
+$script:menuPkg = New-Object System.Windows.Forms.ContextMenuStrip
+$miOpenPkg = $script:menuPkg.Items.Add('打开当前目录')
+$miOpenPkg.Add_Click({ try { Start-Process explorer.exe -ArgumentList ('"' + $pkgRoot + '"') } catch { } })
+$miSwitchPkg = $script:menuPkg.Items.Add('切换便携 Edge 目录…')
+$miSwitchPkg.Add_Click({ Invoke-SwitchPackageRoot })
+$lblSub.ContextMenuStrip = $script:menuPkg
 
 $lblHint = New-Object System.Windows.Forms.Label
 $lblHint.Text = '就绪'
@@ -848,6 +858,7 @@ $script:tip.SetToolTip($script:btnSlimAll, "删除约 380 项非核心组件、�
 $script:tip.SetToolTip($valCache,  "常规清理预计可释放体积（含包根目录 Cache\、GPU/着色器缓存、诊断指标与崩溃转储等）")
 $script:tip.SetToolTip($script:btnBackup, "清理缓存并备份用户数据（支持加密、保留份数与目录设置，可选附带面板本体或 Edge 本体）")
 $script:tip.SetToolTip($script:btnRestore, "从备份包恢复用户数据；含 Edge 本体的完整包可一并恢复程序目录")
+$script:tip.SetToolTip($lblSub, "左键单击打开当前目录；右键可切换其他便携 Edge 目录")
 $script:tip.SetToolTip($lnkRepo, "打开 GitHub 项目主页")
 $script:tip.SetToolTip($lnkIssues, "打开 GitHub Issues 问题列表（可先查看已有记录，避免重复提交）")
 $script:tip.SetToolTip($script:btnPanelUpdate, "检查并更新面板本体（有新版变绿，支持直连与镜像站下载并校验 SHA256）")
@@ -860,11 +871,6 @@ $script:tip.SetToolTip($script:btnDefender,   "调用 bypass_windows_defender.ba
 $script:tip.SetToolTip($script:btnRecom,   ('将内置 ' + $script:baselineCount + ' 条主策略与 ' + $script:baselineSubCount + ' 条子键项写入隔离注册表键（需 UAC），同步推荐项并保留其它自定义项'))
 
 
-# ---------------- F4：把「注册表有、基线没有」的条目复制成 JSON（替代"并入基线"按钮，零布局） ----------------
-$script:menuRecom = New-Object System.Windows.Forms.ContextMenuStrip
-$miCopyDiff = $script:menuRecom.Items.Add('复制差异 JSON 到剪贴板')
-$miCopyDiff.Add_Click({ Copy-PolicyDriftJson })
-$script:btnRecom.ContextMenuStrip = $script:menuRecom
 
 # ---------------- R10：没有 Edge 包时的降级态 ----------------
 $script:pkgButtons = @($script:btnSlimAll, $script:btnSlimOnly, $script:btnIniOff, $script:btnIniOn, $script:btnClean, $script:btnBackup, $script:btnDefApps, $script:btnDefender)
@@ -915,6 +921,7 @@ if ($maxH -lt $wantH) {
 $script:logQueue = $null      # ConcurrentQueue，写入端可能是后台线程
 $script:logTimer = $null
 $script:logBlock = $null      # 非空时 Write-Log 先攒到块里，End-LogBlock 再整块入队
+$script:progressStop = $false   # 长任务（深度搜索）的中断标记
 
 function Append-LogRow($row) {
     if (-not $log -or $log.IsDisposed) { return }
@@ -930,20 +937,36 @@ function Append-LogRow($row) {
     $log.AppendText($row.Text + "`r`n")
 }
 
+$script:draining = $false
 function Drain-LogQueue {
-    if (-not $script:logQueue -or $script:logQueue.IsEmpty) { return }
-    $n = 0
-    while ($n -lt 300) {
-        $row = $null
-        if (-not $script:logQueue.TryDequeue([ref]$row)) { break }
-        Append-LogRow $row
-        $n++
-    }
-    if ($n -gt 0 -and $log -and -not $log.IsDisposed) {
-        $log.SelectionStart = $log.TextLength
-        $log.SelectionLength = 0
-        $log.ScrollToCaret()
-    }
+    if ($script:draining -or -not $script:logQueue -or $script:logQueue.IsEmpty) { return }
+    $script:draining = $true
+    try {
+        $n = 0
+        while ($n -lt 200) {
+            $row = $null
+            if (-not $script:logQueue.TryDequeue([ref]$row)) { break }
+            Append-LogRow $row
+            $n++
+        }
+        if ($n -gt 0 -and $log -and -not $log.IsDisposed) {
+            # UI 日志保留最近 1200 行，避免长时间运行后 RichTextBox 追加变慢（磁盘日志仍全量保留）
+            if ($log.Lines.Length -gt 1200) {
+                $cutLine = $log.Lines.Length - 1200
+                $cutIdx = $log.GetFirstCharIndexFromLine($cutLine)
+                if ($cutIdx -gt 0) {
+                    $ro = $log.ReadOnly
+                    $log.ReadOnly = $false
+                    $log.Select(0, $cutIdx)
+                    $log.SelectedText = ''
+                    $log.ReadOnly = $ro
+                }
+            }
+            $log.SelectionStart = $log.TextLength
+            $log.SelectionLength = 0
+            $log.ScrollToCaret()
+        }
+    } finally { $script:draining = $false }
 }
 
 function Initialize-LogPump {
@@ -968,8 +991,8 @@ function End-LogBlock {
 # 队列在这里初始化：$log 已创建（883 行），且之后的日志都走队列
 Initialize-LogPump
 
-function Write-CleanerOutput([object[]]$lines) {
-    # 界面只留重点（前后体积/释放量/构成 Top5/扩展与站点下钻/逐项结果）；计划清单等明细走 -Det 仅写磁盘日志
+function Write-CleanerOutput([object[]]$lines, [switch]$Brief) {
+    # Brief 模式（清理并备份用）：界面只留清理前后体积、实际释放与异常项，Top5/网址明细全部走 -Det 进磁盘日志
     Start-LogBlock
     try {
         $inSection = $false
@@ -977,6 +1000,11 @@ function Write-CleanerOutput([object[]]$lines) {
             $s = [string]$line
             if ([string]::IsNullOrWhiteSpace($s)) { $inSection = $false; continue }
             $s = $s -replace '^\s+', ''
+            if ($Brief) {
+                if ($s -match '^(清理前|清理后|实际释放|\[跳过\]|失败项)') { Write-Log $s }
+                else { Write-Log $s 'info' -Det }
+                continue
+            }
             if ($s -match '^(当前剩余构成|清理后剩余构成|扩展占用 Top|站点数据 Top)') {
                 Write-Log $s; $inSection = $true; continue
             }
@@ -1017,7 +1045,8 @@ function Set-Busy([bool]$busy, [string]$msg = '') {
     }
     $lblHint.Text = if ($busy) { $msg } else { '就绪' }
     $lblHint.ForeColor = if ($busy) { $clrHeaderAccent } else { $clrOnDarkMuted }
-    $form.Refresh()
+    $form.Invalidate($true)
+    $form.Update()
     [System.Windows.Forms.Application]::DoEvents()
 }
 
@@ -1095,8 +1124,9 @@ function Apply-Status([string]$payloadJson, [switch]$FromCache) {
     }
 }
 
-# 后台状态采集脚本（自包含，路径在启动时拼进去）
-$script:statusScript = @"
+# 后台状态采集脚本（按当前 $pkgRoot 动态拼接，切换便携包目录后可重建）
+function Build-StatusScript {
+    return @"
 # 只取以 { 开头的行：子脚本万一往 stderr 写了警告，不能让它污染 JSON（否则整块解析失败）
 `$sj = & powershell -NoProfile -ExecutionPolicy Bypass -File '$edgeTune' -Action StatusJson -Quiet -Root '$pkgRoot' 2>&1 |
       ForEach-Object { [string]`$_ } | Where-Object { `$_ -match '^\s*\{' } | Select-Object -Last 1
@@ -1170,6 +1200,8 @@ try {
     backupUpToDate = `$bkSame
 } | ConvertTo-Json -Compress
 "@
+}
+$script:statusScript = Build-StatusScript
 
 $script:downloadScript = @'
 param([string[]]$Mirrors, [string]$PartPath, [string]$ZipPath, [string]$ProgressPath)
@@ -1636,7 +1668,7 @@ function Show-PolicyDrift {
         Write-Log ('策略漂移：' + $d.Different.Count + ' 条取值与基线不一致：' + (($d.Different | Select-Object -First 4) -join '、')) 'warn'
     }
     if ($d.Extra.Count -gt 0) {
-        Write-Log ('策略漂移：注册表有 ' + $d.Extra.Count + ' 条基线里没有（可能是你试出来的新条目；右键「应用推荐策略」→ 复制差异 JSON 以便并入基线）') 'warn'
+        Write-Log ('策略漂移：注册表有 ' + $d.Extra.Count + ' 条基线外自定义项') 'warn'
     }
 }
 
@@ -1745,25 +1777,6 @@ function Start-PolicyWatch {
     Write-Log ('开始盯上游策略工具：它一旦删掉 ' + $script:extraOnlyPolicies.Count + ' 条专属推荐策略，会在你关掉策略窗口后提示')
 }
 
-function Copy-PolicyDriftJson {
-    $d = Get-PolicyDrift
-    $items = @()
-    foreach ($n in @($d.Extra)) {
-        $parts = ([string]$n).Split('\')
-        $val = $d.Current[$n]
-        $ty = if ($val -is [int] -or $val -is [long] -or $val -is [uint32]) { 'DWORD' } else { 'STRING' }
-        $o = [ordered]@{ type = $ty }
-        if ($parts.Count -gt 1) { $o.sub = $parts[0]; $o.name = $parts[1] } else { $o.name = $parts[0] }
-        $o.value = $d.Current[$n]
-        $items += $o
-    }
-    if ($items.Count -eq 0) { Write-Log '没有"注册表有、基线没有"的条目，无需复制' 'warn'; return }
-    $json = ConvertTo-Json -InputObject @($items) -Depth 4
-    try {
-        Set-Clipboard -Value $json
-        Write-Log ('已复制 ' + $items.Count + ' 条差异 JSON 到剪贴板（粘进 EdgePolicyBaseline.json 后 -Bump 才生效）') 'ok'
-    } catch { Write-Log ('复制失败：' + $_.Exception.Message) 'err' }
-}
 function Update-PolicyCount {
     $key = $script:policyKey
     if (Test-Path $key) {
@@ -1775,10 +1788,14 @@ function Update-PolicyCount {
     }
 }
 
+$script:packerSupportsZip = $false
 function Find-Packer {
-    # 7zr 就在面板 EXE 里，启动时解包到 tools\；找不到基本只有一种原因：被安全软件删了
-    $p = Join-Path $scriptsDir 'tools\7zr.exe'
-    if (Test-Path -LiteralPath $p) { return $p }
+    # 优先内置 7za.exe（同时支持 7z 与 zip/ZipCrypto），回退 7zr.exe（仅支持 7z）
+    $pZa = Join-Path $scriptsDir 'tools\7za.exe'
+    if (Test-Path -LiteralPath $pZa) { $script:packerSupportsZip = $true; return $pZa }
+    $pZr = Join-Path $scriptsDir 'tools\7zr.exe'
+    if (Test-Path -LiteralPath $pZr) { $script:packerSupportsZip = $false; return $pZr }
+    $script:packerSupportsZip = $false
     return $null
 }
 
@@ -1811,15 +1828,18 @@ function Set-BackupPw([string]$plain) {
 
 function Get-BackupModeFile { return (Join-Path (Get-RuntimeCacheDir) 'backup-mode.json') }
 function Get-BackupCfg {
-    # 备份偏好：方式(encrypted/plain)、保留份数(1-9)、目标目录(空=包根)
-    $cfg = @{ last = 'encrypted'; keep = 3; dir = '' }
+    # 备份偏好：方式(encrypted/plain)、格式(7z/zip)、保留份数(1-9)、目标目录(空=包根)、附带面板/浏览器(默认不勾，记忆上次)
+    $cfg = @{ last = 'encrypted'; fmt = '7z'; keep = 3; dir = ''; panel = $false; full = $false }
     $f = Get-BackupModeFile
     if (Test-Path -LiteralPath $f) {
         try {
             $o = Get-Content -LiteralPath $f -Raw | ConvertFrom-Json
             if ($o.last -in @('encrypted', 'plain')) { $cfg.last = [string]$o.last }
+            if ($o.fmt -in @('7z', 'zip')) { $cfg.fmt = [string]$o.fmt }
             if ($o.keep) { $k = [int]$o.keep; if ($k -ge 1 -and $k -le 9) { $cfg.keep = $k } }
             if ($o.dir) { $cfg.dir = [string]$o.dir }
+            if ($o.PSObject.Properties.Name -contains 'panel') { $cfg.panel = [bool]$o.panel }
+            if ($o.PSObject.Properties.Name -contains 'full')  { $cfg.full  = [bool]$o.full }
         } catch { }
     }
     return $cfg
@@ -1833,7 +1853,7 @@ function Normalize-Keep($val) {
 }
 function Save-BackupCfg([hashtable]$cfg) {
     try {
-        [ordered]@{ last = [string]$cfg.last; keep = (Normalize-Keep $cfg.keep); dir = [string]$cfg.dir; updated = (Get-Date).ToString('s') } |
+        [ordered]@{ last = [string]$cfg.last; fmt = $(if ($cfg.fmt -eq 'zip') { 'zip' } else { '7z' }); keep = (Normalize-Keep $cfg.keep); dir = [string]$cfg.dir; panel = [bool]$cfg.panel; full = [bool]$cfg.full; updated = (Get-Date).ToString('s') } |
             ConvertTo-Json -Compress | Set-Content -LiteralPath (Get-BackupModeFile) -Encoding UTF8
     } catch { Write-Log ('保存备份配置失败：' + $_.Exception.Message) 'warn' }
 }
@@ -1872,9 +1892,9 @@ function Get-LastBackupStamp {
     if (-not (Test-Path -LiteralPath $f)) { return $null }
     try { return (Get-Content -LiteralPath $f -Raw | ConvertFrom-Json) } catch { return $null }
 }
-function Save-LastBackupStamp([string]$fp, [string]$name, [bool]$full = $false, [bool]$panel = $false) {
+function Save-LastBackupStamp([string]$fp, [string]$name, [bool]$full = $false, [bool]$panel = $false, [string]$fmt = '7z') {
     try {
-        [ordered]@{ fp = [string]$fp; time = (Get-Date).ToString('s'); name = [string]$name; full = [bool]$full; panel = [bool]$panel } |
+        [ordered]@{ fp = [string]$fp; time = (Get-Date).ToString('s'); name = [string]$name; full = [bool]$full; panel = [bool]$panel; fmt = [string]$fmt } |
             ConvertTo-Json -Compress | Set-Content -LiteralPath (Get-FingerprintFile) -Encoding UTF8
     } catch { Write-Log ('保存备份指纹失败：' + $_.Exception.Message) 'warn' }
 }
@@ -2103,8 +2123,8 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $btnCheck.Add_Click({
         # 备份包健康检查：对目录内全部历史备份逐个跑只读 7zr t 并汇总（提前发现旧包密码不匹配或文件损坏）
         $dirNow = Resolve-BackupDir $script:pendingBackupDir
-        $pkgs2 = @(Get-ChildItem -LiteralPath $dirNow -Filter 'Edge_Portable_*.7z' -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -like 'Edge_Portable_Data_*' -or $_.Name -like 'Edge_Portable_Full_*' } |
+        $pkgs2 = @(Get-ChildItem -LiteralPath $dirNow -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^(?i)Edge_Portable_(Data|Full)_.*\.(7z|zip)$' } |
             Sort-Object { $m = [regex]::Match($_.Name, '(\d{8}-\d{6})'); if ($m.Success) { $m.Groups[1].Value } else { $_.Name } } -Descending)
         if ($pkgs2.Count -eq 0) { Write-Log ('该目录里还没有备份可校验：' + $dirNow) 'warn'; return }
         $packer2 = Find-Packer
@@ -2194,8 +2214,40 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
         if ($fb.ShowDialog() -eq 'OK') { $script:pendingBackupDir = $fb.SelectedPath; & $showDir }
     })
 
-    # ── 第 3/4 行：面板本体（默认勾，约 1 MB）+ 浏览器本体（默认不勾，约 218 MB）──
-    $panelY = $row2Y + (S 30) + (S 10)
+    # ── 格式行：7z（高压缩）/ zip（Win10 自带解压兼容，需内置 7za.exe）──
+    [void](Find-Packer)
+    $fmtY = $row2Y + (S 30) + (S 10)
+    $lbFmt = New-Object System.Windows.Forms.Label
+    $lbFmt.Text = '压缩格式'
+    $lbFmt.AutoSize = $false
+    $lbFmt.Size = New-Object System.Drawing.Size((S 64), (S 24))
+    $lbFmt.TextAlign = 'MiddleLeft'
+    $lbFmt.ForeColor = $clrText
+    $lbFmt.Location = New-Object System.Drawing.Point($pad, $fmtY)
+    $dlg.Controls.Add($lbFmt)
+
+    $rb7z = New-Object System.Windows.Forms.RadioButton
+    $rb7z.Text = '7z（高压缩）'
+    $rb7z.AutoSize = $true
+    $rb7z.ForeColor = $clrText
+    $rb7z.Location = New-Object System.Drawing.Point(($pad + (S 68)), ($fmtY + (S 2)))
+    $dlg.Controls.Add($rb7z)
+
+    $rbZip = New-Object System.Windows.Forms.RadioButton
+    $rbZip.Text = 'zip（Win10 直接解压）'
+    $rbZip.AutoSize = $true
+    $rbZip.ForeColor = $clrText
+    $rbZip.Location = New-Object System.Drawing.Point(($pad + (S 188)), ($fmtY + (S 2)))
+    $rbZip.Enabled = [bool]$script:packerSupportsZip
+    if (-not $script:packerSupportsZip) { $script:tip.SetToolTip($rbZip, '需在编译时放入 tools\7za.exe 才支持 zip 格式') }
+    $dlg.Controls.Add($rbZip)
+
+    $useZip0 = ($cfg.fmt -eq 'zip') -and [bool]$script:packerSupportsZip
+    $rb7z.Checked = (-not $useZip0)
+    $rbZip.Checked = $useZip0
+
+    # ── 第 3/4 行：面板程序（默认不勾，记忆上次）+ 浏览器程序（默认不勾，记忆上次）──
+    $panelY = $fmtY + (S 28) + (S 6)
     $fullY = $panelY + (S 26) + (S 4)
 
     $chkPanel = New-Object System.Windows.Forms.CheckBox
@@ -2203,7 +2255,7 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $chkPanel.AutoSize = $false
     $chkPanel.CheckAlign = 'MiddleCenter'
     $chkPanel.Size = New-Object System.Drawing.Size((S 20), (S 26))
-    $chkPanel.Checked = $true
+    $chkPanel.Checked = [bool]$cfg.panel
     $chkPanel.ForeColor = $clrText
     $chkPanel.Location = New-Object System.Drawing.Point(($pad + (S 2)), $panelY)
     $dlg.Controls.Add($chkPanel)
@@ -2213,7 +2265,7 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $chkLblPanel.Size = New-Object System.Drawing.Size(($inner - (S 26)), (S 26))
     $chkLblPanel.TextAlign = 'MiddleLeft'
     $chkLblPanel.ForeColor = $clrText
-    $chkLblPanel.Text = '附带面板本体（约 +1 MB）'
+    $chkLblPanel.Text = '包含面板程序（约 +1 MB，换机解压可双击部署）'
     $chkLblPanel.Location = New-Object System.Drawing.Point(($pad + (S 22)), $panelY)
     $chkLblPanel.Add_Click({ $chkPanel.Checked = -not $chkPanel.Checked })
     $dlg.Controls.Add($chkLblPanel)
@@ -2223,7 +2275,7 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $chkFull.AutoSize = $false
     $chkFull.CheckAlign = 'MiddleCenter'
     $chkFull.Size = New-Object System.Drawing.Size((S 20), (S 26))
-    $chkFull.Checked = $false
+    $chkFull.Checked = [bool]$cfg.full
     $chkFull.ForeColor = $clrText
     $chkFull.Location = New-Object System.Drawing.Point(($pad + (S 2)), $fullY)
     $dlg.Controls.Add($chkFull)
@@ -2233,12 +2285,12 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $chkLblFull.Size = New-Object System.Drawing.Size(($inner - (S 26)), (S 26))
     $chkLblFull.TextAlign = 'MiddleLeft'
     $chkLblFull.ForeColor = $clrText
-    $chkLblFull.Text = '附带 Edge 本体（约 +218 MB，离线换机用）'
+    $chkLblFull.Text = '包含浏览器程序（约 +218 MB，离线换机直接用）'
     $chkLblFull.Location = New-Object System.Drawing.Point(($pad + (S 22)), $fullY)
     $chkLblFull.Add_Click({ $chkFull.Checked = -not $chkFull.Checked })
     $dlg.Controls.Add($chkLblFull)
 
-    $fullNoteText = '附带面板时换机解压双击即可部署 Edge；各类备份共用上方保留份数，按时间轮转。'
+    $fullNoteText = '所有备份共用上方保留份数，按时间自动轮转。'
     $fullNoteY = $fullY + (S 26) + (S 2)
     $hFullNote = Get-TextHeight $fullNoteText $fontSmall $inner
     $fullNote = New-Object System.Windows.Forms.Label
@@ -2258,7 +2310,8 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $dirOut = [string]$script:pendingBackupDir
     $script:pendingBackupDir = ''
     $dlg.Dispose()
-    return @{ Start = ($res -eq 'OK'); Encrypt = $enc; Keep = $keep; Dir = $dirOut; Full = [bool]$chkFull.Checked; Panel = [bool]$chkPanel.Checked }
+    $fmtOut = if ($rbZip.Checked -and $script:packerSupportsZip) { 'zip' } else { '7z' }
+    return @{ Start = ($res -eq 'OK'); Encrypt = $enc; Fmt = $fmtOut; Keep = $keep; Dir = $dirOut; Full = [bool]$chkFull.Checked; Panel = [bool]$chkPanel.Checked }
 }
 function Show-PwDialog([string]$title, [string]$note, [bool]$confirm) {
     # 按文字实测高度自适应；密码框统一走 New-TextInput，与备份弹窗视觉一致
@@ -2299,7 +2352,7 @@ function Show-PwDialog([string]$title, [string]$note, [bool]$confirm) {
     return $v1
 }
 
-function Show-ProgressWindow([string]$title) {
+function Show-ProgressWindow([string]$title, [switch]$Stoppable, [switch]$TopMost) {
     # 通用进度窗：上行左阶段右百分比耗时 + 中间 8px 锐利直条 + 下行单行省略文件名（留白充裕，适配双主题）
     $w = S 460
     $pad = S 16
@@ -2350,11 +2403,27 @@ function Show-ProgressWindow([string]$title) {
     $lbFile.Text = ''
     $dlg.Controls.Add($lbFile)
 
-    $dlg.ClientSize = New-Object System.Drawing.Size($w, ($pad + (S 48) + (S 18) + $pad))
+    $stopBtn = $null
+    $baseH = $pad + (S 48) + (S 18) + $pad
+    if ($Stoppable) {
+        # 可中断任务（如深度搜索）：给一个明确的「停止」出口，别让用户只能干等
+        $script:progressStop = $false
+        $stopBtn = New-Object FlatBtn
+        $stopBtn.Text = '停止'
+        $stopBtn.Font = $fontSmall
+        $stopBtn.Size = New-Object System.Drawing.Size((S 72), (S 26))
+        $stopBtn.Location = New-Object System.Drawing.Point(($w - $pad - (S 72)), ($baseH + (S 4)))
+        Apply-FlatBtnTheme $stopBtn $false
+        $stopBtn.Add_Click({ $script:progressStop = $true; $stopBtn.Enabled = $false; $stopBtn.Text = '停止中…' })
+        $dlg.Controls.Add($stopBtn)
+        $baseH = $baseH + (S 34)
+    }
+    $dlg.ClientSize = New-Object System.Drawing.Size($w, $baseH)
+    if ($TopMost) { $dlg.TopMost = $true }
     Show-DialogCentered $dlg
     $dlg.Show()
     [System.Windows.Forms.Application]::DoEvents()
-    return @{ Form = $dlg; Status = $lbStatus; Meta = $lbMeta; File = $lbFile; Bar = $bar; Start = (Get-Date) }
+    return @{ Form = $dlg; Status = $lbStatus; Meta = $lbMeta; File = $lbFile; Bar = $bar; StopBtn = $stopBtn; Start = (Get-Date) }
 }
 function Get-PanelExePath {
     # 当前正在运行的面板 EXE：宿主用 EP_EXEPATH 传真实路径（用户可能把它改名成 EdgePanel.exe / Edge面板.exe）
@@ -2445,10 +2514,11 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
     # 1) 读偏好（方式 / 保留份数 / 目标目录）
     $cfg = Get-BackupCfg
     $encrypt = ($cfg.last -ne 'plain')
+    $fmt = if ($cfg.fmt -eq 'zip' -and $script:packerSupportsZip) { 'zip' } else { '7z' }
     $keep = Normalize-Keep $cfg.keep
     $targetDir = Resolve-BackupDir $cfg.dir
-    $full = [bool]$Full   # 带浏览器本体=一次性搬机包，永不记忆
-    $panel = [bool]$Panel   # 带面板本体=默认勾，只多约 1 MB
+    $full = [bool]$Full
+    $panel = [bool]$Panel
     $running = @(Get-PackageProcs).Count
 
     if ($Silent) {
@@ -2460,12 +2530,16 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
             $ans = Show-BackupDialog ($running -gt 0) $cfg
             if (-not $ans.Start) { Write-Log '已取消备份'; return $false }
             $encrypt = [bool]$ans.Encrypt
+            $fmt = if ($ans.Fmt -eq 'zip' -and $script:packerSupportsZip) { 'zip' } else { '7z' }
             $keep = [int]$ans.Keep
             $full = [bool]$ans.Full
             $panel = [bool]$ans.Panel
             $cfg.last = $(if ($encrypt) { 'encrypted' } else { 'plain' })
+            $cfg.fmt = $fmt
             $cfg.keep = $keep
             $cfg.dir = [string]$ans.Dir
+            $cfg.panel = $panel
+            $cfg.full = $full
             $targetDir = Resolve-BackupDir $cfg.dir
         } catch {
             Write-Log ('备份没能开始：' + $_.Exception.Message) 'err'
@@ -2511,7 +2585,7 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
         # 3) 常规清理
         Write-Log '步骤 1/3：常规清理缓存…'
         $rc = Invoke-Ps $cleaner @('-Apply', '-Quiet', '-Root', $pkgRoot)
-        Write-CleanerOutput $rc.Output
+        Write-CleanerOutput $rc.Output -Brief
         if ($rc.Code -ne 0) { Write-Log ('清理返回码 ' + $rc.Code + '，继续备份') 'warn' }
 
 
@@ -2521,7 +2595,8 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
         if ($fpNow -and -not $Force) {
             $lastStamp = Get-LastBackupStamp
             # 勾选项也算"内容"：数据没变、但上次只打了数据包、这次勾了面板 → 不能当没变化跳过
-            $sameShape = $lastStamp -and ([bool]$lastStamp.full -eq $full) -and ([bool]$lastStamp.panel -eq $panel)
+            $lastFmt = if ($lastStamp -and ($lastStamp.PSObject.Properties.Name -contains 'fmt') -and $lastStamp.fmt) { [string]$lastStamp.fmt } else { '7z' }
+            $sameShape = $lastStamp -and ([bool]$lastStamp.full -eq $full) -and ([bool]$lastStamp.panel -eq $panel) -and ($lastFmt -eq $fmt)
             if ($lastStamp -and $lastStamp.fp -eq $fpNow -and $sameShape) {
                 Write-Log ('数据与上次备份一致（指纹 ' + $fpNow.Substring(0, 12) + '…），本次跳过打包。要强制备份：按住 Shift 点「清理并备份」') 'ok'
                 Set-BackupButtonState $false
@@ -2532,8 +2607,9 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
         # 5) 打包到 .tmp，校验通过才改名（旧备份绝不先删）
         $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
         $prefix = if ($full) { 'Edge_Portable_Full_' } else { 'Edge_Portable_Data_' }
-        $out = Join-Path $targetDir ($prefix + $stamp + '.7z')
-        $tmp = Join-Path $targetDir 'Edge_Portable.tmp.7z'
+        $ext = if ($fmt -eq 'zip') { '.zip' } else { '.7z' }
+        $out = Join-Path $targetDir ($prefix + $stamp + $ext)
+        $tmp = Join-Path $targetDir ('Edge_Portable.tmp' + $ext)
         if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
         Write-Log ('步骤 2/3：打包到 ' + (Split-Path $out -Leaf) + ' …')
         $lblHint.Text = '打包中…'
@@ -2542,10 +2618,17 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
         $script:backupPct = 0
         try { $script:backupDlg = Show-ProgressWindow '正在备份' } catch { }   # 进度窗只是锦上添花，失败不影响备份
 
-        $mxLevel = if ($env:EP_TEST_LIGHT -eq '1') { '-mx1' } else { '-mx4' }
-        $argList = @('a', '-t7z', $mxLevel, '-bsp1', '-bso1')
-        if ($pw) { $argList += @('-p', '-mhe=on') }
-        # 两个可选项互相独立：面板（约 1 MB）/ 浏览器本体（约 218 MB）；文件名前缀只按"带不带 Edge"分
+        if ($fmt -eq 'zip') {
+            # zip 偏向压缩率选 -mx7（Deflate Maximum）+ 多线程；加密走 ZipCrypto 以兼容 Win10/11 资源管理器自带解压
+            $mxLevel = if ($env:EP_TEST_LIGHT -eq '1') { '-mx1' } else { '-mx7' }
+            $argList = @('a', '-tzip', $mxLevel, '-mmt=on', '-bsp1', '-bso1')
+            if ($pw) { $argList += @('-p', '-mem=ZipCrypto') }
+        } else {
+            $mxLevel = if ($env:EP_TEST_LIGHT -eq '1') { '-mx1' } else { '-mx4' }
+            $argList = @('a', '-t7z', $mxLevel, '-mmt=on', '-md=16m', '-bsp1', '-bso1')
+            if ($pw) { $argList += @('-p', '-mhe=on') }
+        }
+        # 两个可选项互相独立：面板程序（约 1 MB）/ 浏览器程序（约 218 MB）；文件名前缀只按"带不带 Edge"分
         $panelIncluded = $false
         if ($full) {
             $argList += @($tmp, 'Data', 'Edge', '-x!Edge\_old', '-x!Edge\_old\*')
@@ -2556,15 +2639,14 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
             $selfExe = Get-PanelExePath
             $selfName = if ($selfExe) { Split-Path -Leaf $selfExe } else { '' }
             $inPkg = $selfExe -and ((Split-Path -Parent $selfExe).TrimEnd('\') -eq $pkgRoot.TrimEnd('\'))
-            if ($inPkg -and ($selfName -match $script:panelExeNameRe)) {
-                $argList += $selfName
+            if ($selfExe -and (Test-Path -LiteralPath $selfExe) -and ($selfName -match $script:panelExeNameRe)) {
+                # 即使跨目录运行面板，传入完整路径也能将面板 EXE 置于归档顶层
+                $argList += $(if ($inPkg) { $selfName } else { $selfExe })
                 $panelIncluded = $true
-                Write-Log ('同时打包面板自身：' + $selfName) 'ok'
-            } elseif ($inPkg) {
-                # 与恢复侧白名单同一口径：非标准名不打，免得打进去却在恢复时被拒
-                Write-Log ('面板文件名不在白名单（' + $selfName + '），未打包面板；想带上它请改名为 EdgePanel.exe 或 Edge面板.exe') 'warn'
+            } elseif ($selfName) {
+                Write-Log ('面板文件名不在白名单（' + $selfName + '），未打入备份包；请使用标准文件名 EdgePanel.exe 或 Edge面板.exe') 'warn'
             } else {
-                Write-Log ('面板不在包根（' + $selfExe + '），本次未打包面板') 'warn'
+                Write-Log '未定位到当前面板 EXE，未打入备份包' 'warn'
             }
         }
         $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -2632,7 +2714,7 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
         $code = $proc.ExitCode
         $proc.Dispose()
         $script:backupProc = $null
-        Get-ChildItem -LiteralPath $targetDir -Filter 'Edge_Portable.tmp.7z.tmp*' -ErrorAction SilentlyContinue |
+        Get-ChildItem -LiteralPath $targetDir -Filter ('Edge_Portable.tmp' + $ext + '.tmp*') -ErrorAction SilentlyContinue |
             ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
 
         if ($code -ne 0) {
@@ -2682,22 +2764,23 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
                 $files++
                 if ($b -match '(?m)^Encrypted = \+') { $encFiles++ }
             }
-            $isAes = ($raw -match '(?m)^Method = .*7zAES')
-            if ($lt.Code -ne 0 -or -not $isAes -or $files -lt 1 -or $encFiles -lt $files) {
+            $isEncMethod = if ($fmt -eq 'zip') { ($raw -match '(?m)^Method = .*ZipCrypto') } else { ($raw -match '(?m)^Method = .*7zAES') }
+            if ($lt.Code -ne 0 -or -not $isEncMethod -or $files -lt 1 -or $encFiles -lt $files) {
                 # 断言不通过＝包没按预期加密：删掉临时包并中止，绝不能改名上线、更不能删旧备份
                 Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
                 Write-Log ('加密没生效（已加密 ' + $encFiles + ' / 共 ' + $files + ' 个文件），已丢弃这次生成的临时文件，旧备份没动') 'err'
                 return $false
             } else {
-                Write-Log ('已确认整套备份都加密了（文件名也一起隐藏）') 'ok'
+                $encOkMsg = if ($fmt -eq 'zip') { '已确认整套 ZIP 备份均已 ZipCrypto 加密（兼容 Win10 自带解压）' } else { '已确认整套 7z 备份均已加密（文件名已隐藏）' }
+                Write-Log $encOkMsg 'ok'
             }
         }
         Write-Log '完整性校验通过' 'ok'
 
         # 7) 改名 + 合并轮转：数据包与完整包共用保留最近 N 份额度，严格按文件名时间戳倒序（避免 Full_ 字母序排在 Data_ 前面）
         Move-Item -LiteralPath $tmp -Destination $out -Force
-        $all = @(Get-ChildItem -LiteralPath $targetDir -Filter 'Edge_Portable_*.7z' -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -like 'Edge_Portable_Data_*' -or $_.Name -like 'Edge_Portable_Full_*' } |
+        $all = @(Get-ChildItem -LiteralPath $targetDir -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^(?i)Edge_Portable_(Data|Full)_.*\.(7z|zip)$' } |
             Sort-Object { $m = [regex]::Match($_.Name, '(\d{8}-\d{6})'); if ($m.Success) { $m.Groups[1].Value } else { $_.Name } } -Descending)
         $kept = @($all | Select-Object -First $keep)
         $all | Select-Object -Skip $keep | ForEach-Object {
@@ -2710,7 +2793,7 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
         if ($panelIncluded) { $kindParts += '面板 EXE' }
         $kindTag = if ($full) { '完整包' } else { '数据包' }
         Write-Log ('备份完成：' + (Split-Path $out -Leaf) + '（' + $mb + ' MB，' + $kindTag + '（' + ($kindParts -join ' + ') + '），' + $(if ($encrypt) { '已加密' } else { '未加密' }) + '，当前共保留 ' + $kept.Count + ' 份）') 'ok'
-        if ($fpNow) { Save-LastBackupStamp $fpNow (Split-Path $out -Leaf) $full $panel; Set-BackupButtonState $false }
+        if ($fpNow) { Save-LastBackupStamp $fpNow (Split-Path $out -Leaf) $full $panel $fmt; Set-BackupButtonState $false }
         if ($full) {
             Write-Log ('完整包用法：解压到任意目录即可用（含 ' + ($kindParts -join ' + ') + '）。') 'warn'
         } elseif ($panelIncluded) {
@@ -2742,8 +2825,8 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
 function Get-BackupPackages {
     # 备份目录里的候选包（数据包 + 完整包），按时间戳倒序（最新的在前）
     $dir = Resolve-BackupDir (Get-BackupCfg).dir
-    return @(Get-ChildItem -LiteralPath $dir -Filter 'Edge_Portable_*.7z' -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -like 'Edge_Portable_Data_*' -or $_.Name -like 'Edge_Portable_Full_*' } |
+    return @(Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^(?i)Edge_Portable_(Data|Full)_.*\.(7z|zip)$' } |
             Sort-Object { $m = [regex]::Match($_.Name, '(\d{8}-\d{6})'); if ($m.Success) { $m.Groups[1].Value } else { $_.Name } } -Descending)
 }
 
@@ -2789,12 +2872,239 @@ function Test-ArchiveSafe([string]$path, [string]$pw, [string]$packer) {
     return $out
 }
 
+function Get-LastPkgFile { return (Join-Path (Get-RuntimeCacheDir) 'last-pkg.txt') }
+function Get-LastSavedPkgRoot {
+    $f = Get-LastPkgFile
+    if (-not (Test-Path -LiteralPath $f)) { return '' }
+    try { return ([System.IO.File]::ReadAllText($f, [System.Text.Encoding]::UTF8)).Trim() } catch { return '' }
+}
+function Save-LastPkgRoot([string]$dir) {
+    if ([string]::IsNullOrWhiteSpace($dir)) { return }
+    try { [System.IO.File]::WriteAllText((Get-LastPkgFile), $dir.TrimEnd('\'), (New-Object System.Text.UTF8Encoding($false))) } catch { }
+}
+
+function Test-SafeDeployDir([string]$dir) {
+    # 仅允许空目录，或仅含面板 EXE / 本面板备份包 / Data / Cache 的目录执行全新部署，防止把 Edge 铺进杂乱目录
+    if ([string]::IsNullOrWhiteSpace($dir) -or -not (Test-Path -LiteralPath $dir)) { return @{ Ok = $false; Others = @('目录不存在') } }
+    $others = New-Object System.Collections.ArrayList
+    foreach ($it in @(Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue)) {
+        if ($it.PSIsContainer) {
+            if ($it.Name -ieq 'Data' -or $it.Name -ieq 'Cache') { continue }
+            [void]$others.Add($it.Name + '\')
+        } else {
+            if (($it.Name -match $script:panelExeNameRe) -or ($it.Name -match '^(?i)Edge_Portable_.*\.(7z|zip)$')) { continue }
+            [void]$others.Add($it.Name)
+        }
+    }
+    return @{ Ok = ($others.Count -eq 0); Others = @($others) }
+}
+
+function Prompt-IfEdgeRunning {
+    if ($env:EP_NO_PROMPT -eq '1' -or $RunOnce -or $script:closeRequested -or $form.IsDisposed) { return }
+    $running = @(Get-PackageProcs)
+    if ($running.Count -gt 0) {
+        Write-Log ('检测到本包 Edge 正在运行（' + $running.Count + ' 个进程）') 'warn'
+        $ansRun = $(if (Show-DialogAsk 'Edge 正在运行' ("当前便携包 Edge 正在运行（" + $running.Count + " 个进程）。`r`n`r`n" + "执行瘦身、清理或更新前需先退出浏览器。`r`n`r`n" + "是否现在关闭？（先正常关闭窗口，8 秒未退出将强制结束，不影响系统其他浏览器）") '关闭并继续' '暂不') { 'Yes' } else { 'No' })
+        if ($ansRun -eq 'Yes') { Close-Edge }
+        else { Write-Log '保持运行；等你要瘦身/清理/备份时，面板会再问一次要不要关。' 'warn' }
+    }
+}
+
+function Show-PkgPickerDialog([string[]]$foundDirs, [string]$curExeDir, [string]$lastSaved, [bool]$allowDeployHere) {
+    # 统一目录选择弹窗：支持多份便携 Edge 选择、空目录全新部署二选一（默认选中上次或首个已发现便携 Edge）、以及手动浏览目录
+    $w = S 560
+    $pad = S 16
+    $inner = $w - 2 * $pad
+    $dlg = New-DialogBase '选择便携 Edge 目录' $w
+    $tipText = '检测到本机已有便携 Edge，请选择要管理的目录（或浏览指定其他目录）。'
+    $hTip = Get-TextHeight $tipText $fontSmall $inner
+    $tip = New-Object System.Windows.Forms.Label
+    $tip.AutoSize = $false
+    $tip.Font = $fontSmall
+    $tip.Size = New-Object System.Drawing.Size($inner, ($hTip + (S 2)))
+    $tip.Location = New-Object System.Drawing.Point($pad, $pad)
+    $tip.ForeColor = $clrMuted
+    $tip.Text = $tipText
+    $dlg.Controls.Add($tip)
+
+    $lbY = $pad + $hTip + (S 10)
+    $list = New-Object System.Windows.Forms.ListBox
+    $list.Dock = 'Fill'
+    $list.IntegralHeight = $false
+    $list.Font = $fontSmall
+    $list.BorderStyle = 'None'
+    $list.BackColor = $clrCard
+    $list.ForeColor = $clrText
+    $list.Add_HandleCreated({ [ThemeHelper]::ApplyDarkScroll($list.Handle, $script:isDark) })
+    $listBox = New-Object CardPanel
+    $listBox.BackColor = $clrCard
+    $listBox.Location = New-Object System.Drawing.Point($pad, $lbY)
+    $listBox.Size = New-Object System.Drawing.Size($inner, (S 132))
+    $listBox.BorderColor = $clrCardEdge
+    $listBox.Padding = New-Object System.Windows.Forms.Padding((S 6), (S 6), (S 6), (S 6))
+    $listBox.Controls.Add($list)
+    $dlg.Controls.Add($listBox)
+
+    $choices = New-Object System.Collections.ArrayList
+    $defIdx = 0
+    foreach ($d in @($foundDirs)) {
+        $verDir = Resolve-VersionDir (Join-Path $d 'Edge') 'msedge.exe'
+        $verTxt = if ($verDir) { Split-Path -Leaf $verDir } else { '已就绪' }
+        $mark = if ($lastSaved -and $d.Equals($lastSaved, [System.StringComparison]::OrdinalIgnoreCase)) { '（上次）' } else { '' }
+        $idx = $choices.Add([pscustomobject]@{ Kind = 'existing'; Path = $d })
+        [void]$list.Items.Add(('{0} ｜ {1}{2}' -f $d, $verTxt, $mark))
+        if ($mark) { $defIdx = $idx }
+    }
+    if ($allowDeployHere -and $curExeDir) {
+        [void]$choices.Add([pscustomobject]@{ Kind = 'deploy'; Path = $curExeDir })
+        [void]$list.Items.Add(('在当前目录全新部署 ｜ ' + $curExeDir))
+    }
+    if ($list.Items.Count -gt 0) { $list.SelectedIndex = $defIdx }
+
+    $browseY = $lbY + (S 132) + (S 8)
+    $script:pickedBrowseDir = ''
+    $btnDeep = New-Object FlatBtn
+    $btnDeep.Text = '深度搜索本机…'
+    $btnDeep.Font = $fontSmall
+    $btnDeep.Location = New-Object System.Drawing.Point($pad, $browseY)
+    $btnDeep.Size = New-Object System.Drawing.Size((S 124), (S 26))
+    Apply-FlatBtnTheme $btnDeep $false
+    $btnDeep.Add_Click({
+        $btnDeep.Enabled = $false
+        $prog = $null
+        try {
+            $script:progressStop = $false
+            $prog = Show-ProgressWindow '正在深度搜索便携 Edge' -Stoppable -TopMost
+            $deepSw = [Diagnostics.Stopwatch]::StartNew()
+            if ($prog) {
+                $prog.Bar.Indeterminate = $true
+                $prog.Status.Text = '正在扫描本机固定盘符（最多 4 层，60 秒自动停止）…'
+                if ($prog.Meta) { $prog.Meta.Text = '搜索中' }
+                [System.Windows.Forms.Application]::DoEvents()
+            }
+            $deepDirs = @(Find-PortableEdgeDirsDeep 4 {
+                param($curP, $vis, $hit)
+                if ($script:closeRequested -or $dlg.IsDisposed -or $script:progressStop) { return $false }
+                if ($deepSw.Elapsed.TotalSeconds -ge 60) { $script:progressStop = $true; return $false }
+                if ($prog) {
+                    $prog.File.Text = $curP
+                    if ($prog.Meta) { $prog.Meta.Text = ('已扫描 ' + $vis + ' 目录 / 发现 ' + $hit + ' 份 / ' + [int]$deepSw.Elapsed.TotalSeconds + 's') }
+                }
+                [System.Windows.Forms.Application]::DoEvents()
+                return $true
+            })
+            if ($script:progressStop -and $prog) { Write-Log ('深度搜索已停止（已扫 ' + $vis + ' 个目录）') 'warn' }
+            $list.Items.Clear()
+            $choices.Clear()
+            $newDef = 0
+            foreach ($d in $deepDirs) {
+                $vd = Resolve-VersionDir (Join-Path $d 'Edge') 'msedge.exe'
+                $vt = if ($vd) { Split-Path -Leaf $vd } else { '已就绪' }
+                $mk = if ($lastSaved -and $d.Equals($lastSaved, [System.StringComparison]::OrdinalIgnoreCase)) { '（上次）' } else { '' }
+                $ix = $choices.Add([pscustomobject]@{ Kind = 'existing'; Path = $d })
+                [void]$list.Items.Add(('{0} ｜ {1}{2}' -f $d, $vt, $mk))
+                if ($mk) { $newDef = $ix }
+            }
+            if ($allowDeployHere -and $curExeDir -and (-not ($deepDirs -contains $curExeDir.TrimEnd('\')))) {
+                [void]$choices.Add([pscustomobject]@{ Kind = 'deploy'; Path = $curExeDir })
+                [void]$list.Items.Add(('在当前目录全新部署 ｜ ' + $curExeDir))
+            }
+            if ($list.Items.Count -gt 0) { $list.SelectedIndex = $newDef }
+            Write-Log ('深度搜索完成：发现 ' + $deepDirs.Count + ' 份便携 Edge') 'ok'
+        } finally {
+            if ($prog) { try { $prog.Close() } catch { } }
+            if (-not $btnDeep.IsDisposed) { $btnDeep.Enabled = $true }
+        }
+    })
+    $dlg.Controls.Add($btnDeep)
+
+    $btnBrowse = New-Object FlatBtn
+    $btnBrowse.Text = '浏览其他目录…'
+    $btnBrowse.Font = $fontSmall
+    $btnBrowse.Location = New-Object System.Drawing.Point(($pad + (S 132)), $browseY)
+    $btnBrowse.Size = New-Object System.Drawing.Size((S 124), (S 26))
+    Apply-FlatBtnTheme $btnBrowse $false
+    $btnBrowse.Add_Click({
+        $fb = New-Object System.Windows.Forms.FolderBrowserDialog
+        $fb.Description = '选择便携 Edge 根目录（包含 Edge\msedge.exe）'
+        if ($fb.ShowDialog() -eq 'OK') {
+            if (Test-PortableEdgeDir $fb.SelectedPath) {
+                $script:pickedBrowseDir = $fb.SelectedPath
+                $dlg.DialogResult = 'OK'
+                $dlg.Close()
+            } else {
+                Write-Log ('所选目录不是便携 Edge 目录：' + $fb.SelectedPath) 'warn'
+            }
+        }
+    })
+    $dlg.Controls.Add($btnBrowse)
+
+    [void](Add-DialogFooter $dlg $w ($browseY + (S 26)) '确定' 'primary')
+    $res = $dlg.ShowDialog()
+    $sel = $list.SelectedIndex
+    $browsed = $script:pickedBrowseDir
+    $script:pickedBrowseDir = ''
+    $dlg.Dispose()
+    if ($res -ne 'OK') { return $null }
+    if ($browsed) { return [pscustomobject]@{ Kind = 'existing'; Path = $browsed } }
+    if ($sel -ge 0 -and $sel -lt $choices.Count) { return $choices[$sel] }
+    return $null
+}
+
+function Switch-PackageRoot([string]$newRoot, [switch]$CheckRunning) {
+    if ([string]::IsNullOrWhiteSpace($newRoot)) { return }
+    $norm = [System.IO.Path]::GetFullPath($newRoot).TrimEnd('\')
+    $script:pkgRoot = $norm
+    $script:progDir = Resolve-ProgramDir $norm
+    $script:edgeRoot = Join-Path $norm 'Edge'
+    $script:noPackage = -not (Test-Path -LiteralPath (Join-Path $script:edgeRoot 'msedge.exe'))
+    # 同步刷新策略键（跟随新目录的 chrome++.ini policy_key）
+    $pkName = 'Portable'
+    $iniFile = Resolve-EdgeIni $norm
+    if ($iniFile) {
+        try {
+            $mPk = [regex]::Match((Get-Content -LiteralPath $iniFile -Raw -Encoding UTF8), '(?im)^\s*policy_key\s*=\s*(\S+)')
+            if ($mPk.Success -and $mPk.Groups[1].Value.Trim()) { $pkName = $mPk.Groups[1].Value.Trim() }
+        } catch { }
+    }
+    $script:policyKey = 'HKCU:\SOFTWARE\Policies\Microsoft\Edge_' + $pkName
+    $script:policyKeyPlain = $script:policyKey -replace '^HKCU:', 'HKEY_CURRENT_USER'
+    $script:statusScript = Build-StatusScript
+    if ($lblSub) { $lblSub.Text = $norm }
+    if (-not $script:noPackage) { Save-LastPkgRoot $norm }
+    # 切换目录后重置依赖旧目录的缓存态，触发新目录的必需件体检、版本复核与策略漂移体检
+    $script:essentialChecked = $false
+    $script:updateAvailable = $false
+    Set-UpdateHighlight $false
+    $valNewVer.Text = '最新版本：未检查'
+    $valNewVer.ForeColor = $clrMuted
+    $script:pendingAutoCheck = $true
+    Set-Busy $false
+    Update-PolicyCount
+    try { Show-PolicyDrift } catch { }
+    Write-Log ('已切换目标目录：' + $norm) 'ok'
+    if ($CheckRunning) { Prompt-IfEdgeRunning }
+    if (-not $script:closeRequested -and -not $form.IsDisposed) { Update-StatusAsync }
+}
+
+function Invoke-SwitchPackageRoot {
+    if ($script:isBusy) { Write-Log '当前有任务执行中，请稍后再切换目录' 'warn'; return }
+    $lastSaved = Get-LastSavedPkgRoot
+    $found = @(Find-PortableEdgeDirs $lastSaved)
+    $safeHere = Test-SafeDeployDir $exeDir
+    $allowDeploy = $safeHere.Ok -and (-not ($found -contains $exeDir.TrimEnd('\')))
+    $pick = Show-PkgPickerDialog $found $exeDir $lastSaved $allowDeploy
+    if ($pick -and $pick.Path) {
+        Switch-PackageRoot $pick.Path -CheckRunning
+    }
+}
+
 function Show-RestorePicker($packages) {
     $w = S 560
     $pad = S 16
     $inner = $w - 2 * $pad
     $dlg = New-DialogBase '从备份恢复' $w
-    $tipText = '选择要恢复的备份：数据包仅恢复用户数据；完整包会一并恢复 Edge 本体（不覆盖本机当前面板）。'
+    $tipText = '数据包仅恢复用户数据；完整包一并恢复浏览器程序（不覆盖当前面板）。'
     $hTip = Get-TextHeight $tipText $fontSmall $inner
     $tip = New-Object System.Windows.Forms.Label
     $tip.AutoSize = $false
@@ -2853,6 +3163,10 @@ function Invoke-RestoreBackup([switch]$Auto) {
         if (-not $pick) { Write-Log '已取消恢复'; return }
     }
     $isFull = $pick.Name -like 'Edge_Portable_Full_*'
+    if ($pick.Extension -ieq '.zip' -and -not $script:packerSupportsZip) {
+        Write-Log '当前内置打包器为 7zr.exe，不支持解压 .zip 备份（请在编译时放入 tools\7za.exe，或手动用资源管理器解压）' 'err'
+        return
+    }
 
     # ① 密码：先试本机 DPAPI，不行再手输（新机器没有 backup-pw.bin 就走这条）
     # 先按"有没有本机密码"试一次：没有密码时按明文包试（l 不带 -p 能打开就说明是明文包）
@@ -3465,6 +3779,17 @@ function Invoke-UpdateNow([bool]$withSlim = $false) {
     $target = $script:latestInfo
     $local = Get-LocalVersion
     if ($target.version -eq $local) { Write-Log '已经是最新版本，无需更新' 'ok'; return }
+    if ($script:noPackage -and -not $dry) {
+        $safe = Test-SafeDeployDir $pkgRoot
+        if (-not $safe.Ok) {
+            $sample = (($safe.Others | Select-Object -First 5) -join '、')
+            Write-Log ('当前目录不是空目录，已阻止部署（发现无关项：' + $sample + '）') 'err'
+            if (-not $RunOnce) {
+                [void](Show-DialogAsk '无法在非空目录部署' ("当前目录包含非备份/非面板文件（" + $sample + "），不允许直接部署便携 Edge。`r`n`r`n请将面板移至空目录，或右键左上角路径切换至已有便携 Edge 目录。") '知道了' '关闭')
+            }
+            return
+        }
+    }
     if (-not $RunOnce) {
         $ans = $(if (Show-DialogAsk '确认更新 Edge' (("将把 Edge 本体从 " + $local + " 更新到 " + $target.version + "。" + "`r`n`r`n" + "过程：关闭本包 Edge → 下载 → 解压 → 覆盖程序文件（保留 chrome++.ini 等 2 项）→ 删除旧版本目录。" + "`r`n`r`n" + $(if ($withSlim) { "更新完成后会自动执行「一键瘦身 + 关闭组件更新」。" } else { "本次只更新程序文件，瘦身需要你另行点击。" }) + "`r`n`r`n继续吗？")) '开始更新' '取消') { 'Yes' } else { 'No' })
         if ($ans -ne 'Yes') { Write-Log '已取消更新'; return }
@@ -4301,13 +4626,26 @@ $form.Add_Shown({
             if ($script:closeRequested -or $form.IsDisposed) { return }
             $script:startupPromptTimer.Dispose()
             if ($env:EP_NO_PROMPT -eq '1') { return }
-            $running = @(Get-PackageProcs)
-            if ($running.Count -gt 0) {
-                Write-Log ('检测到本包 Edge 正在运行（' + $running.Count + ' 个进程）') 'warn'
-                $ansRun = $(if (Show-DialogAsk 'Edge 正在运行' ("当前便携包 Edge 正在运行（" + $running.Count + " 个进程）。`r`n`r`n" + "执行瘦身、清理或更新前需先退出浏览器。`r`n`r`n" + "是否现在关闭？（先正常关闭窗口，8 秒未退出将强制结束，不影响系统其他浏览器）") '关闭并继续' '暂不') { 'Yes' } else { 'No' })
-                if ($ansRun -eq 'Yes') { Close-Edge }
-                else { Write-Log '保持运行；等你要瘦身/清理/备份时，面板会再问一次要不要关。' 'warn' }
+            # 若面板未放在便携 Edge 目录内：自动扫描本机便携 Edge 并弹出统一选择窗（默认选中上次/首个已发现目录）
+            if ($script:noPackage -and -not $env:EP_TEST_PKGROOT -and -not $RunOnce) {
+                $lastSaved = Get-LastSavedPkgRoot
+                # 记住的目录仍然有效 → 静默接管（右键左上角路径可切换），避免每次双击都弹选择窗
+                if ($lastSaved -and (Test-PortableEdgeDir $lastSaved)) {
+                    Write-Log ('沿用上次的便携 Edge 目录：' + $lastSaved)
+                    Switch-PackageRoot $lastSaved -CheckRunning
+                    return
+                }
+                $found = @(Find-PortableEdgeDirs $lastSaved)
+                if ($found.Count -gt 0) {
+                    $safeHere = Test-SafeDeployDir $exeDir
+                    $pick = Show-PkgPickerDialog $found $exeDir $lastSaved $safeHere.Ok
+                    if ($pick -and $pick.Kind -eq 'existing' -and $pick.Path) {
+                        Switch-PackageRoot $pick.Path -CheckRunning
+                        return
+                    }
+                }
             }
+            Prompt-IfEdgeRunning
         })
         $script:startupPromptTimer.Start()
         # 上次被强杀可能留下 edge-update-* 半成品，超过 30 分钟没动的一律清掉

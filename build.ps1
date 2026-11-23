@@ -50,9 +50,12 @@ $resources = [ordered]@{
     'EdgePolicyBaseline.json'              = 'app/EdgePolicyBaseline.json'
 }
 
-# 内置 7zr.exe：备份 / 恢复 / 校验都靠它，缺了就是"半残 EXE"，默认强制要求
+# 内置 7za.exe（同时支持 7z 与 zip/ZipCrypto）优先，否则回退 7zr.exe（仅 7z）
+$sevenZa = Join-Path $src 'tools\7za.exe'
 $sevenZr = Join-Path $src 'tools\7zr.exe'
-if (Test-Path -LiteralPath $sevenZr) {
+if (Test-Path -LiteralPath $sevenZa) {
+    $resources['tools\7za.exe'] = 'app/tools/7za.exe'
+} elseif (Test-Path -LiteralPath $sevenZr) {
     $resources['tools\7zr.exe'] = 'app/tools/7zr.exe'
 } elseif ($No7zr) {
     Write-Warning '按 -No7zr 跳过打包器：产物不能备份/恢复，仅供语法验证'
