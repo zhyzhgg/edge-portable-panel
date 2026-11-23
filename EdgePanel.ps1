@@ -2030,7 +2030,7 @@ function New-DialogBtn($parent, [int]$x, [int]$y, [int]$w, [int]$h, [string]$tex
     return $b
 }
 
-function Add-DialogFooter($dlg, [int]$dlgWidth, [int]$contentBottomY, [string]$okText, [ValidateSet('primary','danger')][string]$okVariant = 'primary', [string]$cancelText = '取消') {
+function Add-DialogFooter($dlg, [int]$dlgWidth, [int]$contentBottomY, [string]$okText, [ValidateSet('primary','danger')][string]$okVariant = 'primary', [string]$cancelText = '取消', [string]$leftText = '', [scriptblock]$onLeft = $null) {
     # 统一底部操作栏：顶部 1px 分割线 + 卡片底色 + 右侧「主按钮 + 取消」
     $pad = S 16
     $barH = S 56
@@ -2059,6 +2059,12 @@ function Add-DialogFooter($dlg, [int]$dlgWidth, [int]$contentBottomY, [string]$o
         $wCancel = [int][math]::Floor($wCancel * $scaleW)
     }
     $btnCancel = New-DialogBtn $footer ($dlgWidth - $pad - $wCancel) $btnY $wCancel $btnH $cancelText 'secondary' 'Cancel'
+    # 左侧次要动作（如「选择目录…」）：与右侧主/次按钮同一行，不必再多占一行
+    if ($leftText) {
+        $wLeft = [int][math]::Max((S 110), ([System.Windows.Forms.TextRenderer]::MeasureText($leftText, $fontBase).Width + 2 * $padX))
+        $btnLeft = New-DialogBtn $footer $pad $btnY $wLeft $btnH $leftText 'secondary'
+        if ($onLeft) { $btnLeft.Add_Click($onLeft) }
+    }
     $btnOk     = New-DialogBtn $footer ($dlgWidth - $pad - $wCancel - $gap - $wOk) $btnY $wOk $btnH $okText $okVariant 'OK'
 
     $dlg.ClientSize = New-Object System.Drawing.Size($dlgWidth, ($footer.Top + $barH))
@@ -3256,16 +3262,8 @@ function Show-RestorePicker($packages) {
     [void](& $addDirPkgs $lastRestoreDir '（上次目录）')
     if ($list.Items.Count -gt 0) { $list.SelectedIndex = 0 }
 
-    $extY = $lbY + (S 132) + (S 8)
-    $extTxt = '选择目录…'
-    $extW = [Math]::Max((S 110), ([System.Windows.Forms.TextRenderer]::MeasureText($extTxt, $fontSmall).Width + (S 20)))
-    $btnExt = New-Object FlatBtn
-    $btnExt.Text = $extTxt
-    $btnExt.Font = $fontSmall
-    $btnExt.Location = New-Object System.Drawing.Point($pad, $extY)
-    $btnExt.Size = New-Object System.Drawing.Size($extW, (S 26))
-    Apply-FlatBtnTheme $btnExt $false
-    $btnExt.Add_Click({
+    # 「选择目录…」并入底部操作栏左侧（与右侧主/次按钮同一行），不再单独占一行
+    $pickDirAction = {
         $fbd = New-Object System.Windows.Forms.FolderBrowserDialog
         $fbd.Description = '选择备份包所在的目录（自动记住上次选择）'
         $fbd.ShowNewFolderButton = $false
@@ -3278,10 +3276,8 @@ function Show-RestorePicker($packages) {
             else { Write-Log ('该目录里没有 Edge_Portable_*.7z / *.zip 备份包：' + $fbd.SelectedPath) 'warn' }
         }
         $fbd.Dispose()
-    })
-    $dlg.Controls.Add($btnExt)
-
-    [void](Add-DialogFooter $dlg $w ($extY + (S 26)) '开始恢复' 'primary')
+    }
+    [void](Add-DialogFooter $dlg $w ($lbY + (S 132)) '开始恢复' 'primary' '取消' '选择目录…' $pickDirAction)
     $res = $dlg.ShowDialog()
     $idx = $list.SelectedIndex
     $dlg.Dispose()
