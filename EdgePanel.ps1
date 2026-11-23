@@ -2303,29 +2303,55 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $lbFmt.Location = New-Object System.Drawing.Point($pad, $fmtY)
     $dlg.Controls.Add($lbFmt)
 
-    # 两个单选按钮：固定 26px 高 + CheckAlign MiddleLeft，文字才和左侧「压缩格式」标签在同一水平线
-    # （AutoSize 时每个单选各自高度不同，'7z' 与 'zip' 两行的基线会差 2-4px）
+    # 两个单选按钮只画圆点（Text 为空、字形居中），文字交给同高 Label ——
+    # 这样四段文字（压缩格式 / 7z / zip / 两个勾选项）全是 26px 高的 Label，基线天然一致，不会出现谁高谁低
     $rb7z = New-Object System.Windows.Forms.RadioButton
-    $rb7z.Text = '7z（高压缩）'
+    $rb7z.Text = ''
     $rb7z.AutoSize = $false
-    $rb7z.CheckAlign = 'MiddleLeft'
+    $rb7z.CheckAlign = 'MiddleCenter'
     $rb7z.ForeColor = $clrText
-    $wRb7z = (& $measureSafe $rb7z.Text) + (S 30)
-    $rb7z.Size = New-Object System.Drawing.Size([int]$wRb7z, (S 26))
+    $rb7z.Size = New-Object System.Drawing.Size((S 20), (S 26))
     $rb7z.Location = New-Object System.Drawing.Point(($lbFmt.Right + (S 6)), $fmtY)
     $dlg.Controls.Add($rb7z)
 
+    $lbl7z = New-Object System.Windows.Forms.Label
+    $lbl7z.AutoSize = $false
+    $lbl7z.TextAlign = 'MiddleLeft'
+    $lbl7z.ForeColor = $clrText
+    $lbl7z.AutoEllipsis = $true
+    $lbl7z.Text = '7z（高压缩）'
+    $lbl7z.Size = New-Object System.Drawing.Size([int]((& $measureSafe $lbl7z.Text) + (S 6)), (S 26))
+    $lbl7z.Location = New-Object System.Drawing.Point([int]($rb7z.Right + (S 2)), $fmtY)
+    $lbl7z.Add_Click({ $rb7z.Checked = $true })
+    $dlg.Controls.Add($lbl7z)
+
     $rbZip = New-Object System.Windows.Forms.RadioButton
-    $rbZip.Text = 'zip（Win10 直接解压）'
+    $rbZip.Text = ''
     $rbZip.AutoSize = $false
-    $rbZip.CheckAlign = 'MiddleLeft'
+    $rbZip.CheckAlign = 'MiddleCenter'
     $rbZip.ForeColor = $clrText
-    $wRbZip = (& $measureSafe $rbZip.Text) + (S 30)
-    $rbZip.Size = New-Object System.Drawing.Size([int]$wRbZip, (S 26))
-    $rbZip.Location = New-Object System.Drawing.Point(($lbFmt.Right + (S 6) + $wRb7z), $fmtY)
-    $rbZip.Enabled = [bool]$script:packerSupportsZip
-    if (-not $script:packerSupportsZip) { $script:tip.SetToolTip($rbZip, '需在编译时放入 tools\7za.exe 才支持 zip 格式') }
+    $rbZip.Size = New-Object System.Drawing.Size((S 20), (S 26))
+    $rbZip.Location = New-Object System.Drawing.Point([int]($lbl7z.Right + (S 14)), $fmtY)
     $dlg.Controls.Add($rbZip)
+
+    $lblZip = New-Object System.Windows.Forms.Label
+    $lblZip.AutoSize = $false
+    $lblZip.TextAlign = 'MiddleLeft'
+    $lblZip.ForeColor = $clrText
+    $lblZip.AutoEllipsis = $true
+    $lblZip.Text = 'zip（Win10 直接解压）'
+    $lblZip.Size = New-Object System.Drawing.Size([int]((& $measureSafe $lblZip.Text) + (S 6)), (S 26))
+    $lblZip.Location = New-Object System.Drawing.Point([int]($rbZip.Right + (S 2)), $fmtY)
+    $lblZip.Add_Click({ if ($rbZip.Enabled) { $rbZip.Checked = $true } })
+    $dlg.Controls.Add($lblZip)
+
+    # zip 不可用（没内嵌 7za）时两者一起置灰
+    if (-not $script:packerSupportsZip) {
+        $rbZip.Enabled = $false
+        $lblZip.ForeColor = $clrMuted
+        $script:tip.SetToolTip($lblZip, '需在编译时放入 tools\7za.exe 才支持 zip 格式')
+        $script:tip.SetToolTip($rbZip, '需在编译时放入 tools\7za.exe 才支持 zip 格式')
+    }
 
     $useZip0 = ($cfg.fmt -eq 'zip') -and [bool]$script:packerSupportsZip
     $rb7z.Checked = (-not $useZip0)
@@ -2407,7 +2433,7 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
         $xFull = $xP + (S 20) + $wLblPanel + (S 14)
     }
     $chkPanel.Location    = New-Object System.Drawing.Point($xP, $rowY)
-    $chkLblPanel.Location = New-Object System.Drawing.Point([int]($xP + (S 20)), $rowY)
+    $chkLblPanel.Location = New-Object System.Drawing.Point([int]($xP + (S 20) + (S 2)), $rowY)
     $chkFull.Location     = New-Object System.Drawing.Point([int]$xFull, $rowY)
     $chkLblFull.Location  = New-Object System.Drawing.Point([int]($xFull + (S 20) + (S 2)), $rowY)
     $chkLblPanel.Add_Click({ $chkPanel.Checked = -not $chkPanel.Checked })
@@ -4931,6 +4957,7 @@ Write-Log ('面板已启动；包根：' + $pkgRoot)
 
 $form.ResumeLayout($false)
 [void]$form.ShowDialog()
+
 
 
 
