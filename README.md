@@ -1,4 +1,4 @@
-﻿# 便携 Edge 面板（EdgePanel）
+# 便携 Edge 面板（EdgePanel）
 
 面向 Windows 用户的**便携版 Microsoft Edge 一键部署与运维面板**——单文件 EXE，双击即用，零外部依赖。  
 把 `EdgePanel.exe` 丢进任意空目录点一次「更新并瘦身」，就能自动完成下载、铺开、微软签名校验、结构比对与精简瘦身；已有便携包用户放进包根即可接管日常瘦身、清理、加密备份恢复、策略管理与版本更新。
@@ -13,7 +13,7 @@
 | **一键瘦身** | 裁撤约 380 项非核心组件（多余语言包、Copilot 外壳、更新与通知链、遥测日志、诊断模板）并关闭组件更新；上游包解出约 976.7 MB → 瘦身后程序目录约 555 MB（105 个文件），核心运行文件一律保留 |
 | **缓存清理** | 精准清理 33 项 Edge 不会自动回收的可再生缓存（GPU/着色器/诊断指标等）；书签、密码、历史记录、登录态、Cookies、扩展本体等 20 项保护名单明确排除、绝不触碰 |
 | **加密备份 / 恢复** | 清理后调用内置 7zr 打包 `Data\`（默认 AES 加密 + `-mhe=on` 隐藏文件名），支持 `7zr t` 完整性校验；一键恢复内置 5 道护栏（只读校验、动态空间预检、关 Edge 前置、同盘临时目录原子切换、失败自动回滚） |
-| **策略管理** | 内置 130 条推荐策略，写入独立隔离键 `HKCU\SOFTWARE\Policies\Microsoft\Edge_Portable`，不污染系统标准 Edge；附带中文策略管理 GUI 与策略漂移体检 |
+| **策略管理** | 内置 132 条推荐策略（其中 1 条仅用于清理失效旧值），写入独立隔离键 `HKCU\SOFTWARE\Policies\Microsoft\Edge_Portable`，不污染系统标准 Edge；附带中文策略管理 GUI 与策略漂移体检 |
 | **更新 Edge 本体** | 多镜像实测测速 → 断点续传下载 → 必需件与微软数字签名预检 → 上游结构漂移比对 → `Edge\_old\` 改名暂存 → 异步解压与覆盖 → 复核通过后删旧，任何步骤失败自动回滚 |
 | **面板自更新** | 启动 6 秒后后台静默探测（优先 `releases/latest` 302 重定向，零 GitHub API 配额消耗）；发现新版后顶栏按钮变绿并提示，校验 SHA256 后由独立助手进程在面板退出后完成替换与自动重启，失败自动从 `.old` 还原并拉起旧版 |
 
@@ -21,7 +21,7 @@
 
 1. **下载面板**：前往本仓库 [Releases](https://github.com/zhyzhgg/edge-portable-panel/releases) 下载最新 `EdgePanel.exe` 与 `SHA256SUMS.txt`（可选校验）。
 2. **放置位置（任选其一）**：
-   - **空目录全新部署**：新建一个不含特殊权限限制的文件夹（如 `D:\App\Edge_Portable\`），只放入 `EdgePanel.exe`，双击启动后点「检查更新」→「更新并瘦身」，自动装出一套可直接运行的便携 Edge。
+   - **空目录全新部署**：新建一个不含特殊权限限制的文件夹（如 `D:\Edge_Portable\`），只放入 `EdgePanel.exe`，双击启动后点「检查更新」→「更新并瘦身」，自动装出一套可直接运行的便携 Edge。
    - **接管已有便携包**：把 `EdgePanel.exe` 直接放进现有便携包根目录（与 `Edge\`、`Data\` 同级），双击启动即可读取当前状态并执行瘦身、清理、备份、策略与更新。
 3. **日常维护**：面板自动跟随 Windows 深/浅色模式（也支持环境变量 `EP_THEME=light|dark` 强制指定）；所有运行时脚本与日志均落在 `%LOCALAPPDATA%\EdgePanel\`，便携包根目录保持干净。
 
@@ -57,7 +57,7 @@ Get-FileHash .\EdgePanel.exe -Algorithm SHA256
 ## 免责声明
 
 - 「瘦身」会删除 `Edge\` 版本目录内约 380 项非核心文件；若后续需要某些被裁功能，可随时点「下载并更新」恢复完整程序文件。
-- 「应用推荐策略」会向当前用户注册表写入 130 条隔离策略，可能改变自动填充、侧边栏、Copilot 等浏览器默认行为；可随时在「打开策略管理」中逐项调整或一键还原。
+- 「应用推荐策略」会向当前用户注册表写入 131 条隔离策略（132 条条目里 1 条只用于清理失效旧值），可能改变自动填充、侧边栏、Copilot 等浏览器默认行为；可随时在「打开策略管理」中逐项调整或一键还原。
 - 重要数据请定期执行加密备份并妥善保管密码（密码丢失无法解开加密备份包）。
 
 ## 从源码构建（3 步）
@@ -79,8 +79,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 2. **中立文件名编译后再复制**（规避杀软拦截 `csc.exe` 直写运行目录）：
 
 ```powershell
-.\build.ps1 -Bump -Out 'D:\tmp\ep_build.exe'
-Copy-Item 'D:\tmp\ep_build.exe' '<发布暂存目录>\EdgePanel.exe' -Force
+.\build.ps1 -Bump -Out '%TEMP%\ep_build.exe'
+Copy-Item '%TEMP%\ep_build.exe' '<发布暂存目录>\EdgePanel.exe' -Force
 Get-FileHash '<发布暂存目录>\EdgePanel.exe' -Algorithm SHA256
 ```
 
