@@ -1796,9 +1796,9 @@ function Get-LastBackupStamp {
     if (-not (Test-Path -LiteralPath $f)) { return $null }
     try { return (Get-Content -LiteralPath $f -Raw | ConvertFrom-Json) } catch { return $null }
 }
-function Save-LastBackupStamp([string]$fp, [string]$name) {
+function Save-LastBackupStamp([string]$fp, [string]$name, [bool]$full = $false, [bool]$panel = $false) {
     try {
-        [ordered]@{ fp = [string]$fp; time = (Get-Date).ToString('s'); name = [string]$name } |
+        [ordered]@{ fp = [string]$fp; time = (Get-Date).ToString('s'); name = [string]$name; full = [bool]$full; panel = [bool]$panel } |
             ConvertTo-Json -Compress | Set-Content -LiteralPath (Get-FingerprintFile) -Encoding UTF8
     } catch { Write-Log ('保存备份指纹失败：' + $_.Exception.Message) 'warn' }
 }
@@ -2118,8 +2118,29 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
         if ($fb.ShowDialog() -eq 'OK') { $script:pendingBackupDir = $fb.SelectedPath; & $showDir }
     })
 
-    # ── 第 3 行：带本体（一次性，永远默认不勾、不记忆）──
-    $fullY = $row2Y + (S 30) + (S 10)
+    # ── 第 3/4 行：面板本体（默认勾，约 1 MB）+ 浏览器本体（默认不勾，约 218 MB）──
+    $panelY = $row2Y + (S 30) + (S 10)
+    $fullY = $panelY + (S 26) + (S 4)
+
+    $chkPanel = New-Object System.Windows.Forms.CheckBox
+    $chkPanel.Text = ''
+    $chkPanel.AutoSize = $false
+    $chkPanel.CheckAlign = 'MiddleCenter'
+    $chkPanel.Size = New-Object System.Drawing.Size((S 20), (S 26))
+    $chkPanel.Checked = $true
+    $chkPanel.ForeColor = $clrText
+    $chkPanel.Location = New-Object System.Drawing.Point(($pad + (S 2)), $panelY)
+    $dlg.Controls.Add($chkPanel)
+
+    $chkLblPanel = New-Object System.Windows.Forms.Label
+    $chkLblPanel.AutoSize = $false
+    $chkLblPanel.Size = New-Object System.Drawing.Size(($inner - (S 26)), (S 26))
+    $chkLblPanel.TextAlign = 'MiddleLeft'
+    $chkLblPanel.ForeColor = $clrText
+    $chkLblPanel.Text = '同时打包面板本体（约 +1 MB，换机解压双击即可就地拉取 Edge）'
+    $chkLblPanel.Location = New-Object System.Drawing.Point(($pad + (S 22)), $panelY)
+    $chkLblPanel.Add_Click({ $chkPanel.Checked = -not $chkPanel.Checked })
+    $dlg.Controls.Add($chkLblPanel)
     # 勾选框只画方块、文字交给同高的独立 Label —— 两者都在 26px 行内垂直居中，彻底消除基线偏差
     $chkFull = New-Object System.Windows.Forms.CheckBox
     $chkFull.Text = ''
@@ -2141,7 +2162,7 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $chkLblFull.Add_Click({ $chkFull.Checked = -not $chkFull.Checked })
     $dlg.Controls.Add($chkLblFull)
 
-    $fullNoteText = '勾选后连 Edge 程序一起打包，得到可换机的完整包；与数据包共用上方「保留最近 N 份」额度，按时间倒序轮转。'
+    $fullNoteText = '面板本体只多约 1 MB：换机时解压双击它，点「更新并瘦身」就能就地装好 Edge。浏览器本体约 +218 MB，勾上得到离线完整包。三者共用上方「保留最近 N 份」额度，按时间倒序轮转。'
     $fullNoteY = $fullY + (S 26)
     $hFullNote = Get-TextHeight $fullNoteText $fontSmall $inner
     $fullNote = New-Object System.Windows.Forms.Label
@@ -2160,7 +2181,7 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $dirOut = [string]$script:pendingBackupDir
     $script:pendingBackupDir = ''
     $dlg.Dispose()
-    return @{ Start = ($res -eq 'OK'); Encrypt = $enc; Keep = $keep; Dir = $dirOut; Full = [bool]$chkFull.Checked }
+    return @{ Start = ($res -eq 'OK'); Encrypt = $enc; Keep = $keep; Dir = $dirOut; Full = [bool]$chkFull.Checked; Panel = [bool]$chkPanel.Checked }
 }
 function Show-PwDialog([string]$title, [string]$note, [bool]$confirm) {
     # 按文字实测高度自适应；密码框统一走 New-TextInput，与备份弹窗视觉一致
@@ -2334,7 +2355,7 @@ function Move-DirWithRetry([string]$srcDir, [string]$dstDir, [int]$maxTries = 3)
     throw ('目录改名失败（文件被占用或杀毒软件正在扫描，请稍后重试）：' + $lastErr.Exception.Message)
 }
 
-function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switch]$Silent, [switch]$Full) {
+function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switch]$Silent, [switch]$Full, [switch]$Panel) {
     # 一键：备份用户数据。$Silent 供"更新前自动备份"用：不弹窗、失败返回 $false。
     $packer = Find-Packer
     if (-not $packer) {
@@ -2349,7 +2370,8 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
     $encrypt = ($cfg.last -ne 'plain')
     $keep = Normalize-Keep $cfg.keep
     $targetDir = Resolve-BackupDir $cfg.dir
-    $full = [bool]$Full   # 带本体=一次性搬机包，永不记忆
+    $full = [bool]$Full   # 带浏览器本体=一次性搬机包，永不记忆
+    $panel = [bool]$Panel   # 带面板本体=默认勾，只多约 1 MB
     $running = @(Get-PackageProcs).Count
 
     if ($Silent) {
@@ -2363,6 +2385,7 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
             $encrypt = [bool]$ans.Encrypt
             $keep = [int]$ans.Keep
             $full = [bool]$ans.Full
+            $panel = [bool]$ans.Panel
             $cfg.last = $(if ($encrypt) { 'encrypted' } else { 'plain' })
             $cfg.keep = $keep
             $cfg.dir = [string]$ans.Dir
@@ -2421,9 +2444,11 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
         # 4.5) 无变化跳过（D12）：清理之后再算指纹——Edge 一上网就改 BrowserMetrics 等文件，
         #      清理前的指纹几乎不可能与上次一致，必须先清再算。
         $fpNow = Get-DataFingerprint $dataDir
-        if ($fpNow -and -not $Force -and -not $full) {
+        if ($fpNow -and -not $Force) {
             $lastStamp = Get-LastBackupStamp
-            if ($lastStamp -and $lastStamp.fp -eq $fpNow) {
+            # 勾选项也算"内容"：数据没变、但上次只打了数据包、这次勾了面板 → 不能当没变化跳过
+            $sameShape = $lastStamp -and ([bool]$lastStamp.full -eq $full) -and ([bool]$lastStamp.panel -eq $panel)
+            if ($lastStamp -and $lastStamp.fp -eq $fpNow -and $sameShape) {
                 Write-Log ('数据与上次备份一致（指纹 ' + $fpNow.Substring(0, 12) + '…），本次跳过打包。要强制备份：按住 Shift 点「清理并备份」') 'ok'
                 Set-BackupButtonState $false
                 return $true
@@ -2446,23 +2471,27 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
         $mxLevel = if ($env:EP_TEST_LIGHT -eq '1') { '-mx1' } else { '-mx4' }
         $argList = @('a', '-t7z', $mxLevel, '-bsp1', '-bso1')
         if ($pw) { $argList += @('-p', '-mhe=on') }
+        # 两个可选项互相独立：面板（约 1 MB）/ 浏览器本体（约 218 MB）；文件名前缀只按"带不带 Edge"分
+        $panelIncluded = $false
         if ($full) {
-            # 完整包：Data\ + Edge\（排除更新暂存目录 _old）+ 面板自身 EXE，换机时解压即用
             $argList += @($tmp, 'Data', 'Edge', '-x!Edge\_old', '-x!Edge\_old\*')
+        } else {
+            $argList += @($tmp, 'Data')
+        }
+        if ($panel) {
             $selfExe = Get-PanelExePath
             $selfName = if ($selfExe) { Split-Path -Leaf $selfExe } else { '' }
             $inPkg = $selfExe -and ((Split-Path -Parent $selfExe).TrimEnd('\') -eq $pkgRoot.TrimEnd('\'))
             if ($inPkg -and ($selfName -match $script:panelExeNameRe)) {
                 $argList += $selfName
-                Write-Log ('完整包同时打包面板自身：' + $selfName) 'ok'
+                $panelIncluded = $true
+                Write-Log ('同时打包面板自身：' + $selfName) 'ok'
             } elseif ($inPkg) {
-                # 与恢复侧白名单保持同一口径：非标准名不打进去，免得打进去却在恢复时被拒
-                Write-Log ('面板文件名不在白名单（' + $selfName + '），未打入完整包；想换机一包齐请改名为 EdgePanel.exe 或 Edge面板.exe') 'warn'
-            } elseif ($selfExe) {
-                Write-Log ('面板不在包根（' + $selfExe + '），未打入完整包') 'warn'
+                # 与恢复侧白名单同一口径：非标准名不打，免得打进去却在恢复时被拒
+                Write-Log ('面板文件名不在白名单（' + $selfName + '），未打包面板；想带上它请改名为 EdgePanel.exe 或 Edge面板.exe') 'warn'
+            } else {
+                Write-Log ('面板不在包根（' + $selfExe + '），本次未打包面板') 'warn'
             }
-        } else {
-            $argList += @($tmp, 'Data')
         }
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName = $packer
@@ -2602,14 +2631,22 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
             try { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction Stop; Write-Log ('已删除较旧' + $delKind + '：' + $_.Name) 'warn' } catch { Write-Log ('删除较旧' + $delKind + '失败（' + $_.Name + '）：' + $_.Exception.Message) 'warn' }
         }
         $mb = [math]::Round((Get-Item -LiteralPath $out).Length / 1MB, 1)
-        $kindTag = if ($full) { '完整包（含 Edge 本体）' } else { '数据包' }
-        Write-Log ('备份完成：' + (Split-Path $out -Leaf) + '（' + $mb + ' MB，' + $kindTag + '，' + $(if ($encrypt) { '已加密' } else { '未加密' }) + '，当前共保留 ' + $kept.Count + ' 份）') 'ok'
-        if ($fpNow) { Save-LastBackupStamp $fpNow (Split-Path $out -Leaf); Set-BackupButtonState $false }
+        $kindParts = @('Data\')
+        if ($full) { $kindParts += 'Edge\' }
+        if ($panelIncluded) { $kindParts += '面板 EXE' }
+        $kindTag = if ($full) { '完整包' } else { '数据包' }
+        Write-Log ('备份完成：' + (Split-Path $out -Leaf) + '（' + $mb + ' MB，' + $kindTag + '（' + ($kindParts -join ' + ') + '），' + $(if ($encrypt) { '已加密' } else { '未加密' }) + '，当前共保留 ' + $kept.Count + ' 份）') 'ok'
+        if ($fpNow) { Save-LastBackupStamp $fpNow (Split-Path $out -Leaf) $full $panel; Set-BackupButtonState $false }
         if ($full) {
-            Write-Log '完整包用法：解压到任意目录，里面就是可直接运行的便携包（含 Edge\ 与 Data\）。' 'warn'
-            if ($keep -le 1) { Write-Log '提示：当前保留份数为 1，下次日常备份将会覆盖这份完整包；如需保留请把份数调到 2 以上。' 'warn' }
+            Write-Log ('完整包用法：解压到任意目录即可用（含 ' + ($kindParts -join ' + ') + '）。') 'warn'
+        } elseif ($panelIncluded) {
+            Write-Log '包里带面板：换机时解压双击 EdgePanel.exe，点「更新并瘦身」即可就地装好 Edge（无需另外下面板）。' 'warn'
+        } else {
+            Write-Log '恢复方法：直接在面板点「从备份恢复」即可一键还原（含完整校验与回滚保护）。' 'warn'
         }
-        else { Write-Log '恢复方法：直接在面板点「从备份恢复」即可一键还原（含完整校验与回滚保护）。' 'warn' }
+        if (($full -or $panelIncluded) -and $keep -le 1) {
+            Write-Log ('提示：当前保留份数为 1，下次日常备份会覆盖这份' + $kindTag + '；如需保留请把份数调到 2 以上。') 'warn'
+        }
         return $true
     } catch {
         Write-Log ('执行失败：' + $_.Exception.Message) 'err'
@@ -4250,6 +4287,8 @@ Write-Log ('面板已启动；包根：' + $pkgRoot)
         'BackupPlain' { Invoke-CleanAndBackup $true }   # 自测：一次不加密的备份
         'BackupForce' { Invoke-CleanAndBackup -Force }   # 自测：忽略指纹强制备份
         'BackupFull' { Invoke-CleanAndBackup -Force -Full }   # 自测：带本体完整包
+        'BackupPanel' { Invoke-CleanAndBackup -Force -Panel }   # 自测：数据 + 面板
+        'BackupFullPanel' { Invoke-CleanAndBackup -Force -Full -Panel }   # 自测：数据 + 面板 + Edge 本体
         'Restore' { Invoke-RestoreBackup -Auto }   # 自测：恢复最新备份（跳过选包与提问）
         'RestoreTwice' {
             # R6 自测：连续两轮恢复压测，检验连续操作下是否退化/卡顿
@@ -4289,3 +4328,5 @@ Write-Log ('面板已启动；包根：' + $pkgRoot)
 
 $form.ResumeLayout($false)
 [void]$form.ShowDialog()
+
+
