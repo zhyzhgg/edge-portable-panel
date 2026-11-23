@@ -510,7 +510,7 @@ $form.Add_FormClosing({
     if ($script:dlPs) { try { [void]$script:dlPs.BeginStop($null, $null) } catch { } }
     if ($script:chkPs) { try { [void]$script:chkPs.BeginStop($null, $null) } catch { } }
     if ($script:refreshPs) { try { [void]$script:refreshPs.BeginStop($null, $null) } catch { } }
-    # 打包中的 7zr 是独立进程，Kill 防孤儿继续写 .tmp
+    # 打包中的 7za 是独立进程，Kill 防孤儿继续写 .tmp
     if ($script:backupProc -and -not $script:backupProc.HasExited) { try { $script:backupProc.Kill() } catch { } }
     if ($script:policyWatch) { try { $script:policyWatch.Stop(); $script:policyWatch.Dispose() } catch { } }
     if ($script:logTimer) { try { $script:logTimer.Stop(); $script:logTimer.Dispose() } catch { }; $script:logTimer = $null }
@@ -1790,16 +1790,14 @@ function Update-PolicyCount {
 
 $script:packerSupportsZip = $false
 function Find-Packer {
-    # 优先内置 7za.exe（同时支持 7z 与 zip/ZipCrypto），回退 7zr.exe（仅支持 7z）
+    # 内置 7za.exe 是唯一打包器：7z 与 zip/ZipCrypto 都由它一个搞定（不再需要 7za）
     $pZa = Join-Path $scriptsDir 'tools\7za.exe'
     if (Test-Path -LiteralPath $pZa) { $script:packerSupportsZip = $true; return $pZa }
-    $pZr = Join-Path $scriptsDir 'tools\7zr.exe'
-    if (Test-Path -LiteralPath $pZr) { $script:packerSupportsZip = $false; return $pZr }
     $script:packerSupportsZip = $false
     return $null
 }
 
-# ---------------- 备份密码（DPAPI 存储 + stdin 喂给 7zr） ----------------
+# ---------------- 备份密码（DPAPI 存储 + stdin 喂给 7za） ----------------
 function Get-BackupPwFile {
     $root = $env:EP_RUNTIME
     if (-not $root) { $root = Join-Path $env:LOCALAPPDATA 'EdgePanel' }
@@ -2121,14 +2119,14 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
         & $refreshPw
     })
     $btnCheck.Add_Click({
-        # 备份包健康检查：对目录内全部历史备份逐个跑只读 7zr t 并汇总（提前发现旧包密码不匹配或文件损坏）
+        # 备份包健康检查：对目录内全部历史备份逐个跑只读 7za t 并汇总（提前发现旧包密码不匹配或文件损坏）
         $dirNow = Resolve-BackupDir $script:pendingBackupDir
         $pkgs2 = @(Get-ChildItem -LiteralPath $dirNow -File -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -match '^(?i)Edge_Portable_(Data|Full)_.*\.(7z|zip)$' } |
             Sort-Object { $m = [regex]::Match($_.Name, '(\d{8}-\d{6})'); if ($m.Success) { $m.Groups[1].Value } else { $_.Name } } -Descending)
         if ($pkgs2.Count -eq 0) { Write-Log ('该目录里还没有备份可校验：' + $dirNow) 'warn'; return }
         $packer2 = Find-Packer
-        if (-not $packer2) { Write-Log '找不到 7zr，无法校验' 'err'; return }
+        if (-not $packer2) { Write-Log '找不到 7za，无法校验' 'err'; return }
         $pw2 = Get-BackupPw
         Write-Log ('开始校验目录内全部 ' + $pkgs2.Count + ' 份备份（只读，不解压）…')
         $okN = 0; $badList = @(); $idx2 = 0
@@ -2137,9 +2135,9 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
             Write-Log ('校验中 ' + $idx2 + '/' + $pkgs2.Count + '：' + $pk2.Name + ' …')
             try { $lblHint.Text = ('校验 ' + $idx2 + '/' + $pkgs2.Count) } catch { }
             $kind2 = if ($pk2.Name -like '*_Full_*') { '完整包' } else { '数据包' }
-            # 密码走 stdin：t/l 不带 -p 时 7zr 会从 stdin 读；-p<密码> 在 PS 5.1 下遇引号/反斜杠会被拆坏参数（实测）
+            # 密码走 stdin：t/l 不带 -p 时 7za 会从 stdin 读；-p<密码> 在 PS 5.1 下遇引号/反斜杠会被拆坏参数（实测）
             $tArgs = @('t', $pk2.FullName)
-            $r = Invoke-7zr $packer2 $tArgs $dirNow $pw2
+            $r = Invoke-Packer $packer2 $tArgs $dirNow $pw2
             if ($r.Code -eq 0) {
                 $okN++
                 Write-Log ('  [正常] ' + $pk2.Name + '（' + $kind2 + '）') 'ok'
@@ -2436,7 +2434,7 @@ function Get-PanelExePath {
     return $null
 }
 
-function Invoke-7zr([string]$packer, [string[]]$argList, [string]$workDir, [string]$stdinPw, [int]$timeoutSec = 600) {
+function Invoke-Packer([string]$packer, [string[]]$argList, [string]$workDir, [string]$stdinPw, [int]$timeoutSec = 600) {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $packer
     $psi.Arguments = (($argList | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' ')
@@ -2467,7 +2465,7 @@ function Invoke-7zr([string]$packer, [string[]]$argList, [string]$workDir, [stri
     $exitCode = if ($timedOut) { -2 } elseif ($p.HasExited) { $p.ExitCode } else { -1 }
     $outStr = if ($outTask.Wait(1500)) { $outTask.Result } else { '' }
     $errStr = if ($errTask.Wait(1500)) { $errTask.Result } else { '' }
-    if ($timedOut) { $errStr = ('7zr 执行超时（>' + $timeoutSec + ' 秒），已强制中止。' + $errStr) }
+    if ($timedOut) { $errStr = ('7za 执行超时（>' + $timeoutSec + ' 秒），已强制中止。' + $errStr) }
     $res = @{ Code = $exitCode; Out = $outStr; Err = $errStr; TimedOut = $timedOut }
     $p.Dispose()
     return $res
@@ -2505,7 +2503,7 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
     # 一键：备份用户数据。$Silent 供"更新前自动备份"用：不弹窗、失败返回 $false。
     $packer = Find-Packer
     if (-not $packer) {
-        Write-Log '面板内置的 7zr 不在（多半被杀毒软件删了）。关掉面板重新打开会自动解包恢复。' 'err'
+        Write-Log '面板内置的 7za 不在（多半被杀毒软件删了）。关掉面板重新打开会自动解包恢复。' 'err'
         return $false
     }
     $dataDir = Join-Path $pkgRoot 'Data'
@@ -2666,7 +2664,7 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
         }
         $errTask = $proc.StandardError.ReadToEndAsync()
         $n = 0
-        # 非阻塞读：ReadLine() 会在 7zr 闷头压 16 MB 块时整条线程冻住好几秒（进度窗和秒表都不动）。
+        # 非阻塞读：ReadLine() 会在 7za 闷头压 16 MB 块时整条线程冻住好几秒（进度窗和秒表都不动）。
         # 这里改成 ReadLineAsync + 30ms 轮询 + 每 120ms 固定刷一次 UI，秒表与进度条都能平稳走。
         $pctNow = 0
         $curName = ''
@@ -2720,7 +2718,7 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
         if ($code -ne 0) {
             Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
             $errText = if ($errRaw -and $errRaw.Trim()) { '：' + (($errRaw -split "`r?`n" | Where-Object { $_.Trim() }) -join ' / ') } else { '' }
-            Write-Log ('打包失败（7zr 退出码 ' + $code + '，非 0 一律判失败）' + $errText) 'err'
+            Write-Log ('打包失败（7za 退出码 ' + $code + '，非 0 一律判失败）' + $errText) 'err'
             if ($tail) { Write-Log $tail 'err' }
             return $false
         }
@@ -2737,17 +2735,17 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
                 [System.Windows.Forms.Application]::DoEvents()
             } catch { }
         }
-        # 密码走 stdin（不带 -p 时 7zr 会从 stdin 读），避免 -p<密码> 被 PowerShell 拆坏
+        # 密码走 stdin（不带 -p 时 7za 会从 stdin 读），避免 -p<密码> 被 PowerShell 拆坏
         $verifyArgs = @('t', $tmp)
-        $vt = Invoke-7zr $packer $verifyArgs $pkgRoot $pw
+        $vt = Invoke-Packer $packer $verifyArgs $pkgRoot $pw
         if ($vt.Code -ne 0) {
             Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
-            Write-Log ('校验失败（7zr t 退出码 ' + $vt.Code + '），已删除临时包，旧备份未动') 'err'
+            Write-Log ('校验失败（7za t 退出码 ' + $vt.Code + '），已删除临时包，旧备份未动') 'err'
             return $false
         }
         if ($pw) {
             $listArgs = @('l', '-slt', $tmp)
-            $lt = Invoke-7zr $packer $listArgs $pkgRoot $pw
+            $lt = Invoke-Packer $packer $listArgs $pkgRoot $pw
             # 逐条解析：7-Zip 对 0 字节文件不做加密（没有内容可加密，Encrypted 记 -），
             # 所以断言只针对"非空文件"；空文件单独计数并在日志里说明，避免误判成加密失败。
             $raw = [string]$lt.Out
@@ -2833,8 +2831,8 @@ function Get-BackupPackages {
 function Test-ArchiveSafe([string]$path, [string]$pw, [string]$packer) {
     # 只读检查：能否打开 + 条目是否安全 + 顶层结构 + 解压后总大小
     $args = @('l', '-slt', $path)
-    # 密码走 stdin：不带 -p 时 7zr 需要密码才读 stdin，对/错密码可区分（实测三种特殊字符均正常）
-    $r = Invoke-7zr $packer $args $pkgRoot $pw
+    # 密码走 stdin：不带 -p 时 7za 需要密码才读 stdin，对/错密码可区分（实测三种特殊字符均正常）
+    $r = Invoke-Packer $packer $args $pkgRoot $pw
     $out = @{ Ok = $false; Reason = ''; TotalBytes = 0; HasData = $false; HasEdge = $false }
     if ($r.Code -ne 0) {
         $out.Reason = if ($pw) { '密码不对，或者包已损坏' } else { '包打不开（可能需要密码，或已损坏）' }
@@ -3150,7 +3148,7 @@ function Show-RestorePicker($packages) {
 function Invoke-RestoreBackup([switch]$Auto) {
     # 从备份恢复用户数据（完整包还可铺回 Edge 本体）。全部护栏：只读校验 → 空间预检 → 关 Edge → 临时目录解压 → 原子切换
     $packer = Find-Packer
-    if (-not $packer) { Write-Log '面板内置的 7zr 不在，无法恢复' 'err'; return }
+    if (-not $packer) { Write-Log '面板内置的 7za 不在，无法恢复' 'err'; return }
     Write-Log '打开恢复：正在扫描备份目录…'
     $pkgs = Get-BackupPackages
     if ($pkgs.Count -eq 0) {
@@ -3163,10 +3161,6 @@ function Invoke-RestoreBackup([switch]$Auto) {
         if (-not $pick) { Write-Log '已取消恢复'; return }
     }
     $isFull = $pick.Name -like 'Edge_Portable_Full_*'
-    if ($pick.Extension -ieq '.zip' -and -not $script:packerSupportsZip) {
-        Write-Log '当前内置打包器为 7zr.exe，不支持解压 .zip 备份（请在编译时放入 tools\7za.exe，或手动用资源管理器解压）' 'err'
-        return
-    }
 
     # ① 密码：先试本机 DPAPI，不行再手输（新机器没有 backup-pw.bin 就走这条）
     # 先按"有没有本机密码"试一次：没有密码时按明文包试（l 不带 -p 能打开就说明是明文包）
@@ -3239,9 +3233,9 @@ function Invoke-RestoreBackup([switch]$Auto) {
         # ④ 解压到同盘临时目录（绝不直接往包根解；600 秒看门狗防死挂）
         Write-Log '恢复[4/7] 正在解压到临时目录…'
         if ($prog) { $prog.Status.Text = '正在解压备份包…'; if ($prog.Meta) { $prog.Meta.Text = '解压中' }; $prog.Bar.Indeterminate = $true; [System.Windows.Forms.Application]::DoEvents() }
-        $xr = Invoke-7zr $packer @('x', '-y', ('-o' + $tmp), $pick.FullName) $pkgRoot $pw 600
+        $xr = Invoke-Packer $packer @('x', '-y', ('-o' + $tmp), $pick.FullName) $pkgRoot $pw 600
         if ($xr.Code -ne 0) {
-            $xWhy = if ($xr.TimedOut) { $xr.Err } else { '解压失败（7zr 退出码 ' + $xr.Code + '）' }
+            $xWhy = if ($xr.TimedOut) { $xr.Err } else { '解压失败（7za 退出码 ' + $xr.Code + '）' }
             throw $xWhy
         }
         Write-Log ('恢复[4/7] 解压完成（已用 ' + [math]::Round($swRestore.Elapsed.TotalSeconds, 1) + ' 秒）')
@@ -4746,5 +4740,7 @@ Write-Log ('面板已启动；包根：' + $pkgRoot)
 
 $form.ResumeLayout($false)
 [void]$form.ShowDialog()
+
+
 
 

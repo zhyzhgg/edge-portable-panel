@@ -50,19 +50,17 @@ $resources = [ordered]@{
     'EdgePolicyBaseline.json'              = 'app/EdgePolicyBaseline.json'
 }
 
-# 内置 7za.exe（同时支持 7z 与 zip/ZipCrypto）优先，否则回退 7zr.exe（仅 7z）
+# 内置 7za.exe（7-Zip Extra 包内 x86 版，public domain）：7z 与 zip/ZipCrypto 都由它一个搞定，不再需要 7zr
 $sevenZa = Join-Path $src 'tools\7za.exe'
-$sevenZr = Join-Path $src 'tools\7zr.exe'
 if (Test-Path -LiteralPath $sevenZa) {
     $resources['tools\7za.exe'] = 'app/tools/7za.exe'
-} elseif (Test-Path -LiteralPath $sevenZr) {
-    $resources['tools\7zr.exe'] = 'app/tools/7zr.exe'
 } elseif ($No7zr) {
     Write-Warning '按 -No7zr 跳过打包器：产物不能备份/恢复，仅供语法验证'
 } else {
-    throw ("缺少打包器：$sevenZr`n" +
-        "  面板靠它做备份与恢复，缺了会变成'半残 EXE'。`n" +
-        "  获取：从原仓库 tools\ 拷入，或从 https://www.7-zip.org/a/7zr.exe 下载（7-Zip 官方，public domain）放到 tools\ 后重试。`n" +
+    throw ("缺少打包器：$sevenZa`n" +
+        "  面板靠它做备份与恢复（7z 与 zip 都靠它），缺了会变成'半残 EXE'。`n" +
+        "  获取：下载 7-Zip Extra（https://www.7-zip.org/download.html 或 github.com/ip7z/7zip/releases 的 7z*-extra.7z），`n" +
+        "  把包内 x86 的 7za.exe 放到 tools\ 后重试。`n" +
         "  确实只想验证编译：加 -No7zr。")
 }
 
