@@ -43,7 +43,7 @@
 [CmdletBinding()]
 param(
     [string]$Root,
-    [ValidateSet('SlimAll', 'SlimOnly', 'IniOff', 'IniOn', 'MetricsOff', 'MetricsOn', 'Status', 'StatusJson')]
+    [ValidateSet('SlimAll', 'SlimOnly', 'IniOff', 'IniOn', 'Status', 'StatusJson')]
     [string]$Action,
     [switch]$Quiet
 )
@@ -278,8 +278,8 @@ function Show-StatusJson([string]$pkgRoot, [string]$prog, [string]$ini) {
         $dataDirs = @(Get-ChildItem $data -Directory -Force -ErrorAction SilentlyContinue).Count
         $dataMb = [math]::Round(((Get-ChildItem $data -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum / 1MB), 1)
     }
-    $off = $false; $cmdLine = ''; $metricsOff = $false
-    if ($ini) { $s = Read-IniState $ini; $off = $s.Off; $cmdLine = $s.Value; $metricsOff = ($cmdLine -match '--disable-features=[^\s]*\bPersistentHistograms\b') }
+    $off = $false; $cmdLine = ''
+    if ($ini) { $s = Read-IniState $ini; $off = $s.Off; $cmdLine = $s.Value }
     [pscustomobject]@{
         Root       = $pkgRoot
         Prog       = $prog
@@ -292,7 +292,6 @@ function Show-StatusJson([string]$pkgRoot, [string]$prog, [string]$ini) {
         HasCdm     = (Test-Path (Join-Path $data 'WidevineCdm'))
         Ini        = $ini
         IniOff     = $off
-        MetricsOff = $metricsOff
         CmdLine    = $cmdLine
         EdgeRunning = (Test-EdgeRunningIn $pkgRoot)
     } | ConvertTo-Json -Compress
@@ -397,8 +396,6 @@ if ($Action) {
         'SlimOnly'{ if (-not (Do-SlimOnly $Root $prog)) { $rc = 2 } }
         'IniOff'  { if ($ini) { if (-not (Set-ComponentUpdate $ini $true)) { $rc = 1 } } else { Say '找不到 ini' 'Red'; $rc = 1 } }
         'IniOn'      { if ($ini) { if (-not (Set-ComponentUpdate $ini $false)) { $rc = 1 } } else { Say '找不到 ini' 'Red'; $rc = 1 } }
-        'MetricsOff' { if ($ini) { if (-not (Set-IniFeature $ini 'PersistentHistograms' $true '--disable-features')) { $rc = 1 } } else { Say '找不到 ini' 'Red'; $rc = 1 } }
-        'MetricsOn'  { if ($ini) { if (-not (Set-IniFeature $ini 'PersistentHistograms' $false '--disable-features')) { $rc = 1 } } else { Say '找不到 ini' 'Red'; $rc = 1 } }
     }
     if (-not $Quiet) { [void](Read-Host '按回车退出') }
     exit $rc
@@ -435,3 +432,4 @@ if (-not $Quiet) {
     [void](Read-Host '按回车退出')
 }
 exit 0
+

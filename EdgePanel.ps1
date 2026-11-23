@@ -848,44 +848,6 @@ $script:btnUpdateSlim.Enabled = $false
 [void](New-Note $gUpdate 14 118 387 34 '可仅更新 Edge 本体，或更新后自动瘦身；chrome++.ini 等便携配置始终保留。')
 
 $gCache = New-Group 14 340 415 120 '缓存与备份'
-$script:suppressMetricsEvent = $false
-$mTxt = '禁用 8 MB 诊断指标'
-$mLblW = [System.Windows.Forms.TextRenderer]::MeasureText($mTxt, $fontSmall).Width + (S 6)
-$mChkW = S 18
-$mTotalW = $mChkW + $mLblW
-$mStartX = (S 401) - $mTotalW
-$script:chkMetrics = New-Object System.Windows.Forms.CheckBox
-$script:chkMetrics.Text = ''
-$script:chkMetrics.AutoSize = $false
-$script:chkMetrics.CheckAlign = 'MiddleCenter'
-$script:chkMetrics.Size = New-Object System.Drawing.Size($mChkW, (S 20))
-$script:chkMetrics.Location = New-Object System.Drawing.Point($mStartX, (S 11))
-$script:chkMetrics.Checked = $false
-$gCache.Controls.Add($script:chkMetrics)
-$script:lblMetrics = New-Object System.Windows.Forms.Label
-$script:lblMetrics.Text = $mTxt
-$script:lblMetrics.Font = $fontSmall
-$script:lblMetrics.ForeColor = $clrMuted
-$script:lblMetrics.AutoSize = $false
-$script:lblMetrics.TextAlign = 'MiddleLeft'
-$script:lblMetrics.Size = New-Object System.Drawing.Size($mLblW, (S 20))
-$script:lblMetrics.Location = New-Object System.Drawing.Point(($mStartX + $mChkW), (S 11))
-$script:lblMetrics.Cursor = 'Hand'
-$script:lblMetrics.Add_Click({ if ($script:chkMetrics.Enabled) { $script:chkMetrics.Checked = -not $script:chkMetrics.Checked } })
-$gCache.Controls.Add($script:lblMetrics)
-$script:chkMetrics.Add_CheckedChanged({
-    if ($script:suppressMetricsEvent) { return }
-    $wantOff = [bool]$script:chkMetrics.Checked
-    $act = if ($wantOff) { 'MetricsOff' } else { 'MetricsOn' }
-    $r = Invoke-Ps $edgeTune @('-Action', $act, '-Quiet', '-Root', $pkgRoot)
-    if ($r.Code -eq 0) {
-        Write-Log ($(if ($wantOff) { '已禁用 8 MB 诊断指标（--disable-features=PersistentHistograms），需重启 Edge 生效' } else { '已恢复默认诊断指标配置，需重启 Edge 生效' })) 'ok'
-    } else {
-        Write-Log '修改 chrome++.ini 失败，已还原开关状态' 'err'
-        $script:suppressMetricsEvent = $true
-        try { $script:chkMetrics.Checked = (-not $wantOff) } finally { $script:suppressMetricsEvent = $false }
-    }
-})
 $script:btnClean   = New-Btn $gCache 14  38 123 30 '清理缓存' { Invoke-Action 'Clean' }
 $script:btnBackup  = New-Btn $gCache 146 38 123 30 '清理并备份' { Invoke-CleanAndBackup -Force:(([System.Windows.Forms.Control]::ModifierKeys -band [System.Windows.Forms.Keys]::Shift) -ne 0) } $true
 $script:btnRestore = New-Btn $gCache 278 38 123 30 '从备份恢复' { Invoke-RestoreBackup }
@@ -932,8 +894,6 @@ $script:tip.SetToolTip($valDrm,    "是否已下载 WidevineCdm（DRM 组件）�
 $script:tip.SetToolTip($valIni,    "chrome++.ini 的 command_line 里是否带 --disable-component-update")
 $script:tip.SetToolTip($script:btnSlimAll, "删除约 380 项非核心组件、关闭组件更新并启用多线程下载，核心运行文件一律保留")
 $script:tip.SetToolTip($valCache,  "常规清理预计可释放体积（含包根目录 Cache\、GPU/着色器缓存、诊断指标与崩溃转储等）")
-$script:tip.SetToolTip($script:chkMetrics, '向 chrome++.ini 写入 --disable-features=PersistentHistograms，阻止自动生成 8 MB 的 BrowserMetrics 文件（需重启 Edge 生效）')
-$script:tip.SetToolTip($script:lblMetrics, '向 chrome++.ini 写入 --disable-features=PersistentHistograms，阻止自动生成 8 MB 的 BrowserMetrics 文件（需重启 Edge 生效）')
 $script:tip.SetToolTip($script:btnBackup, "清理缓存并备份用户数据（支持加密、保留份数与目录设置，可选附带面板本体或 Edge 本体）")
 $script:tip.SetToolTip($script:btnRestore, "从备份包恢复用户数据；含 Edge 本体的完整包可一并恢复程序目录")
 $script:tip.SetToolTip($lblSub, ('单击打开目录：' + $pkgRoot))
@@ -1170,10 +1130,6 @@ function Apply-Status([string]$payloadJson, [switch]$FromCache) {
         $valIni.ForeColor = if ($s.IniOff) { $clrGo } else { $clrText }
         $valCurVer.Text = '当前版本：' + (Get-LocalVersion)
         Set-SlimAllState ($s.SlimCount -eq 0 -and $s.IniOff)
-        if ($script:chkMetrics -and ($s.PSObject.Properties.Name -contains 'MetricsOff')) {
-            $script:suppressMetricsEvent = $true
-            try { $script:chkMetrics.Checked = [bool]$s.MetricsOff } finally { $script:suppressMetricsEvent = $false }
-        }
         if ($p.cacheMB) { $valCache.Text = "{0} MB" -f $p.cacheMB } else { $valCache.Text = '—' }
         $cacheNum = 0.0
         if ($p.cacheMB -and [double]::TryParse([string]$p.cacheMB, [ref]$cacheNum)) {
@@ -4863,6 +4819,7 @@ Write-Log ('面板已启动；包根：' + $pkgRoot)
 
 $form.ResumeLayout($false)
 [void]$form.ShowDialog()
+
 
 
 
