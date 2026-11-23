@@ -2342,8 +2342,17 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $chkLblPanel.AutoSize = $false
     $chkLblPanel.TextAlign = 'MiddleLeft'
     $chkLblPanel.ForeColor = $clrText
+    $chkLblPanel.AutoEllipsis = $true
     $chkLblPanel.Text = '包含面板程序'
-    $chkLblPanel.Size = New-Object System.Drawing.Size([int]([System.Windows.Forms.TextRenderer]::MeasureText($chkLblPanel.Text, $fontBase).Width + (S 4)), (S 26))
+    # 同浏览器项：按「基础字号」与「放大 1.35 倍字号」取较大宽度，避免 125%/150% 下折行叠字
+    $wLblPanel = [System.Windows.Forms.TextRenderer]::MeasureText($chkLblPanel.Text, $fontBase).Width
+    try {
+        $fBigP = New-Object System.Drawing.Font($fontBase.FontFamily, [single]($fontBase.SizeInPoints * 1.35))
+        $wBigP = [System.Windows.Forms.TextRenderer]::MeasureText($chkLblPanel.Text, $fBigP).Width
+        if ($wBigP -gt $wLblPanel) { $wLblPanel = $wBigP }
+        $fBigP.Dispose()
+    } catch { }
+    $chkLblPanel.Size = New-Object System.Drawing.Size([int]($wLblPanel + (S 8)), (S 26))
     $chkLblPanel.Location = New-Object System.Drawing.Point(($pad + (S 22)), $rowY)
     $chkLblPanel.Add_Click({ $chkPanel.Checked = -not $chkPanel.Checked })
     $dlg.Controls.Add($chkLblPanel)
@@ -2364,7 +2373,18 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $chkLblFull.TextAlign = 'MiddleLeft'
     $chkLblFull.ForeColor = $clrText
     $chkLblFull.Text = $(if ($edgeMbTxt) { '包含浏览器程序（压缩后约 +' + $edgeMbTxt + ' MB）' } else { '包含浏览器程序（本机还没有 Edge 程序）' })
-    $wLblFull = [System.Windows.Forms.TextRenderer]::MeasureText($chkLblFull.Text, $fontBase).Width + (S 4)
+    $chkLblFull.AutoEllipsis = $true
+    # 宽度取「基础字号」与「放大 1.35 倍字号」的较大值：不同 DPI 下 TextRenderer 与控件实际渲染会差一档，
+    # 只按基础字号量会在 125%/150% 下折行，两行挤进 26px 高就变成叠字（.258 修的就是这个）
+    $wLblFull = 0
+    $wLblFull = [System.Windows.Forms.TextRenderer]::MeasureText($chkLblFull.Text, $fontBase).Width
+    try {
+        $fBig = New-Object System.Drawing.Font($fontBase.FontFamily, [single]($fontBase.SizeInPoints * 1.35))
+        $wBig = [System.Windows.Forms.TextRenderer]::MeasureText($chkLblFull.Text, $fBig).Width
+        if ($wBig -gt $wLblFull) { $wLblFull = $wBig }
+        $fBig.Dispose()
+    } catch { }
+    $wLblFull = [int]($wLblFull + (S 8))
     $wLblFullMax = $inner - ($chkFull.Left - $pad)
     if ($wLblFull -gt $wLblFullMax) { $wLblFull = $wLblFullMax }
     $chkLblFull.Size = New-Object System.Drawing.Size([int]$wLblFull, (S 26))
