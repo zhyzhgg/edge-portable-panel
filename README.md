@@ -87,6 +87,12 @@ Get-FileHash '<发布暂存目录>\EdgePanel.exe' -Algorithm SHA256
 3. 先提交并推送源码到 `main`（若遇 `schannel` TLS 握手失败，可加 `git -c http.sslBackend=openssl push origin main`）。
 4. 创建与 `$script:panelVersion` 一致的 Git Tag（如 `v1.3.5`）并发布 Release，附件固定命名为 **`EdgePanel.exe`** 与 **`SHA256SUMS.txt`**（格式：`<64位十六进制哈希>  EdgePanel.exe`）。
 
+## 工程文档
+
+- [GUI 规范与验收流程](docs/GUI规范_WinForms_v2_2026-11-22.md)：布局栅格、深浅色渲染、长任务异步、机械化验收门槛。
+- [踩坑与教训](docs/踩坑与教训_2026-11-22.md)：24 个版本的返工与两次桌面假死复盘，末附一页速查表。
+- [同类项目借鉴结论](docs/参考_同类项目_结论_2026-11-23.md)：ChromeDebloater / CentBrowser 等的能力对照，哪些已落地、哪些明确不做。
+
 ## 许可
 
 本仓库代码基于 [MIT](LICENSE) 许可开源；第三方组件与上游项目说明见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
