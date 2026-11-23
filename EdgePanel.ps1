@@ -2118,9 +2118,7 @@ function Show-DialogAsk([string]$title, [string]$message, [string]$okText = '确
 
 function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     # 一次问完：关 Edge（若在运行）+ 加密 + 保留份数 + 目标目录。整框按文字实测高度排版。
-    # 宽度 620：125% DPI 下「压缩格式/7z/zip」与「包含面板程序/包含浏览器程序」两行要按列对齐需 583px，
-    # 560 宽只有 528px 可用，会退回左对齐（用户实测反馈"没对齐"就是这个原因）
-    $w = S 620
+    $w = S 560
     $pad = S 16
     $inner = $w - 2 * $pad
     $dlg = New-DialogBase '备份用户数据' $w
@@ -2278,82 +2276,31 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     # ── 格式行：7z（高压缩）/ zip（Win10 自带解压兼容，需内置 7za.exe）──
     [void](Find-Packer)
     $fmtY = $row2Y + (S 30) + (S 10)
-    # ── 本机实测：系统 DPI 放大后，控件渲染出的文字比按当前字号量出的更宽（125% 下约 +25%），
-    #    只按当前字号设宽会让标签折行、两行挤进 26px 高就成叠字。这里取「按真实屏幕 DPI 放大的字号」量一次，
-    #    与基础字号取较大值，做到量多少就留多少。
-    $dpiFactorDlg = 1.0
-    try {
-        $gDlg = $dlg.CreateGraphics()
-        $dpiFactorDlg = [double]$gDlg.DpiX / 96.0
-        $gDlg.Dispose()
-    } catch { }
-    if ($dpiFactorDlg -lt 1.0) { $dpiFactorDlg = 1.0 }
-    $fBigDlg = New-Object System.Drawing.Font($fontBase.FontFamily, [single]($fontBase.SizeInPoints * $dpiFactorDlg))
-    $measureSafe = {
-        param([string]$txt)
-        [int][math]::Max(
-            ([System.Windows.Forms.TextRenderer]::MeasureText($txt, $fontBase).Width),
-            ([System.Windows.Forms.TextRenderer]::MeasureText($txt, $fBigDlg).Width))
-    }
-
     $lbFmt = New-Object System.Windows.Forms.Label
     $lbFmt.Text = '压缩格式'
     $lbFmt.AutoSize = $false
-    $lbFmt.Size = New-Object System.Drawing.Size(([int][math]::Max((S 64), ((& $measureSafe '压缩格式') + (S 10)))), (S 26))
+    $lbFmt.Size = New-Object System.Drawing.Size(([int][math]::Max((S 64), ([System.Windows.Forms.TextRenderer]::MeasureText('压缩格式', $fontBase).Width + (S 10)))), (S 24))
     $lbFmt.TextAlign = 'MiddleLeft'
     $lbFmt.ForeColor = $clrText
     $lbFmt.Location = New-Object System.Drawing.Point($pad, $fmtY)
     $dlg.Controls.Add($lbFmt)
 
-    # 两个单选按钮只画圆点（Text 为空、字形居中），文字交给同高 Label ——
-    # 这样四段文字（压缩格式 / 7z / zip / 两个勾选项）全是 26px 高的 Label，基线天然一致，不会出现谁高谁低
     $rb7z = New-Object System.Windows.Forms.RadioButton
-    $rb7z.Text = ''
-    $rb7z.AutoSize = $false
-    $rb7z.CheckAlign = 'MiddleCenter'
+    $rb7z.Text = '7z（高压缩）'
+    $rb7z.AutoSize = $true
     $rb7z.ForeColor = $clrText
-    $rb7z.Size = New-Object System.Drawing.Size((S 20), (S 26))
-    $rb7z.Location = New-Object System.Drawing.Point(($lbFmt.Right + (S 6)), $fmtY)
+    $rb7z.Location = New-Object System.Drawing.Point(($lbFmt.Right + (S 6)), ($fmtY + (S 2)))
     $dlg.Controls.Add($rb7z)
 
-    $lbl7z = New-Object System.Windows.Forms.Label
-    $lbl7z.AutoSize = $false
-    $lbl7z.TextAlign = 'MiddleLeft'
-    $lbl7z.ForeColor = $clrText
-    $lbl7z.AutoEllipsis = $true
-    $lbl7z.Text = '7z（高压缩）'
-    $lbl7z.Size = New-Object System.Drawing.Size([int]((& $measureSafe $lbl7z.Text) + (S 6)), (S 26))
-    $lbl7z.Location = New-Object System.Drawing.Point([int]($rb7z.Right + (S 2)), $fmtY)
-    $lbl7z.Add_Click({ $rb7z.Checked = $true })
-    $dlg.Controls.Add($lbl7z)
-
     $rbZip = New-Object System.Windows.Forms.RadioButton
-    $rbZip.Text = ''
-    $rbZip.AutoSize = $false
-    $rbZip.CheckAlign = 'MiddleCenter'
+    $rbZip.Text = 'zip（Win10 直接解压）'
+    $rbZip.AutoSize = $true
     $rbZip.ForeColor = $clrText
-    $rbZip.Size = New-Object System.Drawing.Size((S 20), (S 26))
-    $rbZip.Location = New-Object System.Drawing.Point([int]($lbl7z.Right + (S 10)), $fmtY)
+    $wRb7z = [System.Windows.Forms.TextRenderer]::MeasureText($rb7z.Text, $fontBase).Width + (S 28)
+    $rbZip.Location = New-Object System.Drawing.Point(($lbFmt.Right + (S 6) + $wRb7z), ($fmtY + (S 2)))
+    $rbZip.Enabled = [bool]$script:packerSupportsZip
+    if (-not $script:packerSupportsZip) { $script:tip.SetToolTip($rbZip, '需在编译时放入 tools\7za.exe 才支持 zip 格式') }
     $dlg.Controls.Add($rbZip)
-
-    $lblZip = New-Object System.Windows.Forms.Label
-    $lblZip.AutoSize = $false
-    $lblZip.TextAlign = 'MiddleLeft'
-    $lblZip.ForeColor = $clrText
-    $lblZip.AutoEllipsis = $true
-    $lblZip.Text = 'zip（Win10 直接解压）'
-    $lblZip.Size = New-Object System.Drawing.Size([int]((& $measureSafe $lblZip.Text) + (S 6)), (S 26))
-    $lblZip.Location = New-Object System.Drawing.Point([int]($rbZip.Right + (S 2)), $fmtY)
-    $lblZip.Add_Click({ if ($rbZip.Enabled) { $rbZip.Checked = $true } })
-    $dlg.Controls.Add($lblZip)
-
-    # zip 不可用（没内嵌 7za）时两者一起置灰
-    if (-not $script:packerSupportsZip) {
-        $rbZip.Enabled = $false
-        $lblZip.ForeColor = $clrMuted
-        $script:tip.SetToolTip($lblZip, '需在编译时放入 tools\7za.exe 才支持 zip 格式')
-        $script:tip.SetToolTip($rbZip, '需在编译时放入 tools\7za.exe 才支持 zip 格式')
-    }
 
     $useZip0 = ($cfg.fmt -eq 'zip') -and [bool]$script:packerSupportsZip
     $rb7z.Checked = (-not $useZip0)
@@ -2378,8 +2325,7 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
             if ($edgeSum -gt 0) { $edgeMbTxt = [string][math]::Round(($edgeSum / 1MB) * $edgeRatio) }
         }
     } catch { }
-    # ── 同一行：面板程序 + 浏览器程序（两个独立可选项，默认不勾，记忆上次）
-    # 两列锚点与上面「压缩格式」行共用：第一个勾选框对齐 7z、第二个对齐 zip；宽度不够时退回左对齐
+    # ── 同一行：面板程序 + 浏览器程序（两个独立可选项，默认不勾，记忆上次）──
     $rowY = $fmtY + (S 28) + (S 6)
 
     $chkPanel = New-Object System.Windows.Forms.CheckBox
@@ -2389,6 +2335,7 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $chkPanel.Size = New-Object System.Drawing.Size((S 20), (S 26))
     $chkPanel.Checked = [bool]$cfg.panel
     $chkPanel.ForeColor = $clrText
+    $chkPanel.Location = New-Object System.Drawing.Point(($pad + (S 2)), $rowY)
     $dlg.Controls.Add($chkPanel)
 
     $chkLblPanel = New-Object System.Windows.Forms.Label
@@ -2397,8 +2344,17 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $chkLblPanel.ForeColor = $clrText
     $chkLblPanel.AutoEllipsis = $true
     $chkLblPanel.Text = '包含面板程序'
-    $wLblPanel = (& $measureSafe $chkLblPanel.Text) + (S 8)
-    $chkLblPanel.Size = New-Object System.Drawing.Size([int]$wLblPanel, (S 26))
+    # 同浏览器项：按「基础字号」与「放大 1.35 倍字号」取较大宽度，避免 125%/150% 下折行叠字
+    $wLblPanel = [System.Windows.Forms.TextRenderer]::MeasureText($chkLblPanel.Text, $fontBase).Width
+    try {
+        $fBigP = New-Object System.Drawing.Font($fontBase.FontFamily, [single]($fontBase.SizeInPoints * 1.35))
+        $wBigP = [System.Windows.Forms.TextRenderer]::MeasureText($chkLblPanel.Text, $fBigP).Width
+        if ($wBigP -gt $wLblPanel) { $wLblPanel = $wBigP }
+        $fBigP.Dispose()
+    } catch { }
+    $chkLblPanel.Size = New-Object System.Drawing.Size([int]($wLblPanel + (S 8)), (S 26))
+    $chkLblPanel.Location = New-Object System.Drawing.Point(($pad + (S 22)), $rowY)
+    $chkLblPanel.Add_Click({ $chkPanel.Checked = -not $chkPanel.Checked })
     $dlg.Controls.Add($chkLblPanel)
 
     # 勾选框只画方块、文字交给同高的独立 Label —— 两者都在 26px 行内垂直居中，彻底消除基线偏差
@@ -2409,42 +2365,37 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $chkFull.Size = New-Object System.Drawing.Size((S 20), (S 26))
     $chkFull.Checked = [bool]$cfg.full
     $chkFull.ForeColor = $clrText
+    $chkFull.Location = New-Object System.Drawing.Point([int]($chkLblPanel.Right + (S 14)), $rowY)
     $dlg.Controls.Add($chkFull)
 
     $chkLblFull = New-Object System.Windows.Forms.Label
     $chkLblFull.AutoSize = $false
     $chkLblFull.TextAlign = 'MiddleLeft'
     $chkLblFull.ForeColor = $clrText
+    $chkLblFull.Text = $(if ($edgeMbTxt) { '包含浏览器程序（压缩后约 +' + $edgeMbTxt + ' MB）' } else { '包含浏览器程序（本机还没有 Edge 程序）' })
     $chkLblFull.AutoEllipsis = $true
-    $chkLblFull.Text = $(if ($edgeMbTxt) { '包含浏览器程序（+' + $edgeMbTxt + ' MB）' } else { '包含浏览器程序（本机还没有 Edge 程序）' })
-    $wLblFull = (& $measureSafe $chkLblFull.Text) + (S 8)
-    $wLblFullMax = $inner - ((S 20) + (S 2)) - $pad
+    # 宽度取「基础字号」与「放大 1.35 倍字号」的较大值：不同 DPI 下 TextRenderer 与控件实际渲染会差一档，
+    # 只按基础字号量会在 125%/150% 下折行，两行挤进 26px 高就变成叠字（.258 修的就是这个）
+    $wLblFull = 0
+    $wLblFull = [System.Windows.Forms.TextRenderer]::MeasureText($chkLblFull.Text, $fontBase).Width
+    try {
+        $fBig = New-Object System.Drawing.Font($fontBase.FontFamily, [single]($fontBase.SizeInPoints * 1.35))
+        $wBig = [System.Windows.Forms.TextRenderer]::MeasureText($chkLblFull.Text, $fBig).Width
+        if ($wBig -gt $wLblFull) { $wLblFull = $wBig }
+        $fBig.Dispose()
+    } catch { }
+    $wLblFull = [int]($wLblFull + (S 8))
+    $wLblFullMax = $inner - ($chkFull.Left - $pad)
     if ($wLblFull -gt $wLblFullMax) { $wLblFull = $wLblFullMax }
     $chkLblFull.Size = New-Object System.Drawing.Size([int]$wLblFull, (S 26))
-    $dlg.Controls.Add($chkLblFull)
-
-    # 定锚：能对齐就对齐（视觉上两行成两列），放不下退回左对齐（宁可不对齐也不能撞边）
-    $col1X = [int][math]::Max([int]$rb7z.Left, $pad)
-    $col2X = [int]$rbZip.Left
-    $needRight = $col2X + (S 20) + (S 2) + $wLblFull
-    if ($col2X -gt $col1X -and $needRight -le ($pad + $inner)) {
-        $xP = $col1X
-        $xFull = $col2X
-    } else {
-        $xP = $pad + (S 2)
-        $xFull = $xP + (S 20) + $wLblPanel + (S 14)
-    }
-    $chkPanel.Location    = New-Object System.Drawing.Point($xP, $rowY)
-    $chkLblPanel.Location = New-Object System.Drawing.Point([int]($xP + (S 20) + (S 2)), $rowY)
-    $chkFull.Location     = New-Object System.Drawing.Point([int]$xFull, $rowY)
-    $chkLblFull.Location  = New-Object System.Drawing.Point([int]($xFull + (S 20) + (S 2)), $rowY)
-    $chkLblPanel.Add_Click({ $chkPanel.Checked = -not $chkPanel.Checked })
+    $chkLblFull.Location = New-Object System.Drawing.Point([int]($chkFull.Right + (S 2)), $rowY)
     $chkLblFull.Add_Click({ $chkFull.Checked = -not $chkFull.Checked })
+    $dlg.Controls.Add($chkLblFull)
 
     # 括号里省掉的“换机用途”放进悬停提示，信息不丢
     $script:tip.SetToolTip($chkLblPanel, '把面板 EXE 一起打包：换机时解压双击它就能就地部署 Edge')
     $script:tip.SetToolTip($chkPanel, '把面板 EXE 一起打包：换机时解压双击它就能就地部署 Edge')
-    $script:tip.SetToolTip($chkLblFull, '把整份 Edge 程序一起打包（压缩后约 +' + $edgeMbTxt + ' MB），适合离线换机或重装')
+    $script:tip.SetToolTip($chkLblFull, '把整份 Edge 程序一起打包，适合离线换机或重装')
     $script:tip.SetToolTip($chkFull, '把整份 Edge 程序一起打包，适合离线换机或重装')
 
     $fullNoteText = '所有备份共用上方保留份数，按时间自动轮转。'
@@ -2468,7 +2419,6 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $script:pendingBackupDir = ''
     $dlg.Dispose()
     $fmtOut = if ($rbZip.Checked -and $script:packerSupportsZip) { 'zip' } else { '7z' }
-    try { if ($fBigDlg) { $fBigDlg.Dispose() } } catch { }
     return @{ Start = ($res -eq 'OK'); Encrypt = $enc; Fmt = $fmtOut; Keep = $keep; Dir = $dirOut; Full = [bool]$chkFull.Checked; Panel = [bool]$chkPanel.Checked }
 }
 function Show-PwDialog([string]$title, [string]$note, [bool]$confirm) {
@@ -4959,7 +4909,6 @@ Write-Log ('面板已启动；包根：' + $pkgRoot)
 
 $form.ResumeLayout($false)
 [void]$form.ShowDialog()
-
 
 
 
