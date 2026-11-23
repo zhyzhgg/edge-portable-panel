@@ -93,6 +93,15 @@ $targets = @(
     @{ Rel = 'Data\Default\EdgeCoupons';                 Note = 'Edge 优惠券数据' }
     @{ Rel = 'Data\Default\parcel_tracking_db';          Note = '包裹跟踪数据' }
     @{ Rel = 'Data\Default\Edge Wallet';                 Note = '钱包数据（可能含银行卡/地址）' }
+
+    # —— WebView2（微软账号登录弹窗用）的图形缓存（.230 实测 5.6 MB）——
+    @{ Rel = 'Data\OneAuth\WebView2\EBWebView\GrShaderCache';    Note = 'MSA 登录弹窗 WebView2 的着色器缓存' }
+    @{ Rel = 'Data\OneAuth\WebView2\EBWebView\ShaderCache';      Note = '同上（WebView2 着色器缓存）' }
+    @{ Rel = 'Data\OneAuth\WebView2\EBWebView\Default\GPUCache'; Note = '同上（WebView2 GPU 缓存）' }
+
+    # —— 纯统计 / 诊断日志（可再生，无用户数据；支持通配）——
+    @{ Rel = 'Data\Default\load_statistics.db';                  Note = '站点加载耗时统计库（Edge 会自动重建）' }
+    @{ Rel = 'Data\Default\*_diagnostic.log*';                   Note = '设置/收藏夹同步诊断日志（纯文本，实测约 0.9 MB）' }
 )
 # 故意不列入（有副作用 / 含状态，删了会重新弹提示、重新下载或丢配置）：
 #   Data\Crashpad                          崩溃转储目录；实测仅 308B 元数据，清它没收益
@@ -117,6 +126,9 @@ $protected = @(
 
 function Get-DirSizeMB([string]$p) {
     if (-not (Test-Path -LiteralPath $p)) { return 0 }
+    $item = Get-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item) { return 0 }
+    if (-not $item.PSIsContainer) { return [math]::Round($item.Length / 1MB, 2) }   # 单文件目标（.db / .log）
     $sum = (Get-ChildItem -LiteralPath $p -Recurse -Force -File -ErrorAction SilentlyContinue |
             Measure-Object Length -Sum).Sum
     if ($null -eq $sum) { return 0 }
@@ -124,11 +136,70 @@ function Get-DirSizeMB([string]$p) {
 }
 
 function Test-ProtectedPath([string]$full, [string]$root) {
+    # 按路径段精确比对：旧写法 -like "*\$name\*" 属子串匹配，新增目标里一旦出现同名片段就会误伤或漏网
     $rel = $full.Substring($root.TrimEnd('\').Length).TrimStart('\')
+    $segs = @($rel -split '\\')
     foreach ($name in $protected) {
-        if ($rel -eq $name -or $rel -like "$name\*" -or $rel -like "*\$name" -or $rel -like "*\$name\*") { return $name }
+        if ($segs -contains $name) { return $name }
+        if ($segs.Count -gt 0 -and $segs[-1] -like ($name + '*')) { return $name }
     }
     return $null
+}
+
+# 剩余体积构成：清完到底还剩什么、为什么不动它们（解决"清完还是 475 MB"的困惑）
+$script:whyKeep = @{
+    'Extensions'               = '扩展本体（程序文件）'
+    'IndexedDB'                = '站点/扩展数据库（删 = 清站点数据）'
+    'Local Extension Settings' = '扩展配置与规则库（uBlock 规则、油猴脚本）'
+    'Local Storage'            = '站点偏好与非 Cookie 登录态'
+    'Service Worker'           = '含 ScriptCache，删了 MV3 扩展罢工'
+    'Network'                  = 'Cookie 与网络状态库'
+    'WebStorage'               = '站点存储元数据'
+    'Extension State'          = '扩展启停与权限状态'
+    'Sync Data'                = '账号同步状态'
+    'Sessions'                 = '会话恢复（重开上次标签）'
+    'Default（根层文件）'       = 'Profile 根层数据库（历史/书签/Cookie 等，受保护）'
+    '（根层文件）'             = 'Data 根层文件（Local State 等，受保护）'
+}
+
+function Get-Composition([string]$dataDir) {
+    # 一次全树扫描，按「Default\<子目录>」或「一级目录」聚合，供 Top N 展示
+    $agg = @{}
+    if (Test-Path -LiteralPath $dataDir) {
+        $rootLen = $dataDir.TrimEnd('\').Length + 1
+        Get-ChildItem -LiteralPath $dataDir -Recurse -Force -File -ErrorAction SilentlyContinue | ForEach-Object {
+            $segs = @(($_.FullName.Substring($rootLen)) -split '\\')
+            if ($segs[0] -eq 'Default') {
+                if ($segs.Count -ge 3) { $key = 'Default\' + $segs[1] } else { $key = 'Default（根层文件）' }
+            } elseif ($segs.Count -ge 2) { $key = $segs[0] }
+            else { $key = '（根层文件）' }
+            if ($agg.ContainsKey($key)) { $agg[$key] += $_.Length } else { $agg[$key] = [double]$_.Length }
+        }
+    }
+    $rows = @()
+    foreach ($k in $agg.Keys) { $rows += [pscustomobject]@{ Key = $k; MB = [math]::Round($agg[$k] / 1MB, 1) } }
+    return @($rows | Sort-Object MB -Descending)
+}
+
+function Pad-Display([string]$s, [int]$width) {
+    # 按显示宽度补空格（中文占 2 列），避免中文行错位
+    $len = 0
+    foreach ($ch in $s.ToCharArray()) { if ([int]$ch -gt 0x2E80) { $len += 2 } else { $len += 1 } }
+    if ($len -ge $width) { return $s }
+    return $s + (' ' * ($width - $len))
+}
+
+function Show-Composition($rows, [string]$title) {
+    if (-not $rows -or @($rows).Count -eq 0) { return }
+    Write-Host ''
+    Write-Host $title -ForegroundColor DarkCyan
+    $rows | Select-Object -First 5 | ForEach-Object {
+        $look = $_.Key -replace '^Default\\', ''
+        $why = if ($script:whyKeep.ContainsKey($look)) { $script:whyKeep[$look] }
+               elseif ($script:whyKeep.ContainsKey($_.Key)) { $script:whyKeep[$_.Key] }
+               else { '未列入清单（保守起见不动）' }
+        Write-Host ('  {0,8:N1} MB  {1}{2}' -f $_.MB, (Pad-Display $_.Key 34), $why) -ForegroundColor DarkGray
+    }
 }
 
 # ---- 0. 环境自检 --------------------------------------------------------------
@@ -196,37 +267,53 @@ if ($running.Count -gt 0) {
 }
 
 # ---- 2. 盘点 ----------------------------------------------------------------
-$before = Get-DirSizeMB $data
 $cacheBefore = Get-DirSizeMB (Join-Path $Root 'Cache')
+$compBefore = Get-Composition $data
+$before = [math]::Round((($compBefore | Measure-Object MB -Sum).Sum), 1)
 $plan = @()
 foreach ($t in $targets) {
     $full = Join-Path $Root $t.Rel
-    $bad = Test-ProtectedPath $full $Root
-    if ($bad) {
-        $plan += [pscustomobject]@{ Rel = $t.Rel; SizeMB = 0; State = "拒绝（受保护：$bad）"; Note = $t.Note; Full = $full }
-        continue
+    $hits = @()
+    if ($t.Rel -match '[*?]') {
+        $hits = @(Get-Item -Path $full -Force -ErrorAction SilentlyContinue)      # 通配目标（诊断日志）
+    } elseif (Test-Path -LiteralPath $full) {
+        $hits = @(Get-Item -LiteralPath $full -Force -ErrorAction SilentlyContinue)
     }
-    if (-not (Test-Path -LiteralPath $full)) {
+    if (@($hits).Count -eq 0) {
         $plan += [pscustomobject]@{ Rel = $t.Rel; SizeMB = 0; State = '不存在（跳过）'; Note = $t.Note; Full = $full }
         continue
     }
-    $plan += [pscustomobject]@{ Rel = $t.Rel; SizeMB = (Get-DirSizeMB $full); State = '可清'; Note = $t.Note; Full = $full }
+    foreach ($h in @($hits)) {
+        $rel = $h.FullName.Substring($Root.Length).TrimStart('\')
+        $bad = Test-ProtectedPath $h.FullName $Root
+        if ($bad) {
+            $plan += [pscustomobject]@{ Rel = $rel; SizeMB = 0; State = "拒绝（受保护：$bad）"; Note = $t.Note; Full = $h.FullName }
+            continue
+        }
+        $plan += [pscustomobject]@{ Rel = $rel; SizeMB = (Get-DirSizeMB $h.FullName); State = '可清'; Note = $t.Note; Full = $h.FullName }
+    }
 }
 
 Write-Host ("清理前：Data " + $before + " MB ；Cache " + $cacheBefore + " MB") -ForegroundColor Gray
 Write-Host ''
-$plan | Sort-Object SizeMB -Descending | ForEach-Object {
+$plan | Where-Object { $_.State -ne '不存在（跳过）' } | Sort-Object SizeMB -Descending | ForEach-Object {
     '{0,9:N1} MB  {1,-52} {2}' -f $_.SizeMB, $_.Rel, $_.State
+}
+$skipCount = @($plan | Where-Object { $_.State -eq '不存在（跳过）' }).Count
+if ($skipCount -gt 0) {
+    Write-Host ("（其余 " + $skipCount + " 项本次不存在，已跳过；常态是被上次清理过，或 Edge 退出时按策略自动清了缓存）") -ForegroundColor DarkGray
 }
 $total = [math]::Round((($plan | Where-Object { $_.State -eq '可清' } | Measure-Object SizeMB -Sum).Sum), 1)
 Write-Host ''
 Write-Host ("预计可释放：" + $total + " MB") -ForegroundColor Cyan
 Write-Host '(书签 / 密码 / 历史 / 登录态 / 扩展本体 / 语言模型 都不在清单里，不会被动到)' -ForegroundColor DarkGray
+Show-Composition $compBefore '当前剩余构成（Top 5，本脚本不会动它们）'
 
 if (-not $Apply) {
     # 机器可读行：只在预览时输出（面板靠它取数值，不依赖上文中文文案）。
     # 实清理时输出会在面板日志里露出一行内部协议，故不输出。
-    Write-Host ('#EPJSON ' + ([pscustomobject]@{ totalMB = $total; dataMB = $before; cacheMB = $cacheBefore } | ConvertTo-Json -Compress))
+    $top5 = @($compBefore | Select-Object -First 5 | ForEach-Object { [pscustomobject]@{ k = $_.Key; mb = $_.MB } })
+    Write-Host ('#EPJSON ' + ([pscustomobject]@{ totalMB = $total; dataMB = $before; cacheMB = $cacheBefore; top = $top5 } | ConvertTo-Json -Compress -Depth 4))
     Write-Host ''
     Write-Host '这是预览。确认真删请加 -Apply：' -ForegroundColor Yellow
     Write-Host ('  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + $PSCommandPath + '" -Apply') -ForegroundColor Yellow
@@ -239,27 +326,34 @@ Write-Host ''
 $freed = 0.0
 $failed = @()
 foreach ($p in $plan | Where-Object { $_.State -eq '可清' }) {
-    $sizeBefore = $p.SizeMB
+    $sizeNow = Get-DirSizeMB $p.Full      # 执行前现算：预览与执行之间 Edge 可能又写了东西
     try {
         Remove-Item -LiteralPath $p.Full -Recurse -Force -ErrorAction Stop
-        $freed += $sizeBefore
-        Write-Host ("  [OK]   " + $p.Rel + "  (-" + $sizeBefore + " MB)") -ForegroundColor Green
+        $freed += $sizeNow
+        Write-Host ("  [OK]   " + $p.Rel + "  (-" + $sizeNow + " MB)") -ForegroundColor Green
     } catch {
         $failed += [pscustomobject]@{ Rel = $p.Rel; Error = $_.Exception.Message }
         Write-Host ("  [跳过] " + $p.Rel + "  " + $_.Exception.Message) -ForegroundColor Yellow
     }
 }
 
-$after = Get-DirSizeMB $data
+$compAfter = Get-Composition $data
+$after = [math]::Round((($compAfter | Measure-Object MB -Sum).Sum), 1)
 $cacheAfter = Get-DirSizeMB (Join-Path $Root 'Cache')
+$freedR = [math]::Round($freed, 1)
 Write-Host ''
 Write-Host ("清理后：Data " + $after + " MB ；Cache " + $cacheAfter + " MB") -ForegroundColor Gray
-Write-Host ("实际释放：" + [math]::Round($freed, 1) + " MB" + $(if ($failed.Count) { "（" + $failed.Count + " 项失败，通常是文件仍被占用）" } else { '' })) -ForegroundColor Cyan
+Write-Host ("实际释放：" + $freedR + " MB" + $(if ($failed.Count) { "（" + $failed.Count + " 项失败，通常是文件仍被占用）" } else { '' })) -ForegroundColor Cyan
+$delta = [math]::Round($before - $after, 1)
+if ($delta -gt ($freedR + 1)) {
+    Write-Host ("（附带说明：Data 总量比清理前少 " + $delta + " MB，多于清单里的 " + $freedR + " MB，差额是 Edge 自己清掉的）") -ForegroundColor DarkGray
+}
 if ($failed.Count) {
     Write-Host '失败项：' -ForegroundColor Yellow
     $failed | ForEach-Object { Write-Host ('  - ' + $_.Rel + ' : ' + $_.Error) -ForegroundColor Yellow }
     Write-Host '提示：完全退出 Edge 后重跑一次即可。' -ForegroundColor Yellow
 }
+Show-Composition $compAfter '清理后剩余构成（Top 5，这些是故意不动的）'
 Write-Host ''
 Write-Host '重启 Edge 生效（缓存会随使用慢慢重建，属正常）。' -ForegroundColor DarkGray
 if (-not $Quiet) { [void](Read-Host '按回车退出') }
