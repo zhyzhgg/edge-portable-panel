@@ -2118,7 +2118,9 @@ function Show-DialogAsk([string]$title, [string]$message, [string]$okText = '确
 
 function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     # 一次问完：关 Edge（若在运行）+ 加密 + 保留份数 + 目标目录。整框按文字实测高度排版。
-    $w = S 560
+    # 宽度 620：125% DPI 下「压缩格式/7z/zip」与「包含面板程序/包含浏览器程序」两行要按列对齐需 583px，
+    # 560 宽只有 528px 可用，会退回左对齐（用户实测反馈"没对齐"就是这个原因）
+    $w = S 620
     $pad = S 16
     $inner = $w - 2 * $pad
     $dlg = New-DialogBase '备份用户数据' $w
@@ -2331,7 +2333,7 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $rbZip.CheckAlign = 'MiddleCenter'
     $rbZip.ForeColor = $clrText
     $rbZip.Size = New-Object System.Drawing.Size((S 20), (S 26))
-    $rbZip.Location = New-Object System.Drawing.Point([int]($lbl7z.Right + (S 14)), $fmtY)
+    $rbZip.Location = New-Object System.Drawing.Point([int]($lbl7z.Right + (S 10)), $fmtY)
     $dlg.Controls.Add($rbZip)
 
     $lblZip = New-Object System.Windows.Forms.Label
