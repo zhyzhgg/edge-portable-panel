@@ -2256,6 +2256,17 @@ function Show-ProgressWindow([string]$title) {
     [System.Windows.Forms.Application]::DoEvents()
     return @{ Form = $dlg; Status = $lbStatus; Meta = $lbMeta; File = $lbFile; Bar = $bar; Start = (Get-Date) }
 }
+function Get-PanelExePath {
+    # 当前正在运行的面板 EXE：宿主用 EP_EXEPATH 传真实路径（用户可能把它改名成 EdgePanel.exe / Edge面板.exe）
+    $p = [string]$env:EP_EXEPATH
+    if ($p -and (Test-Path -LiteralPath $p)) { return $p }
+    foreach ($c in @('EdgePanel.exe', 'Edge面板.exe')) {
+        $q = Join-Path $pkgRoot $c
+        if (Test-Path -LiteralPath $q) { return $q }
+    }
+    return $null
+}
+
 function Invoke-7zr([string]$packer, [string[]]$argList, [string]$workDir, [string]$stdinPw, [int]$timeoutSec = 600) {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $packer
@@ -2434,8 +2445,16 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
         $argList = @('a', '-t7z', $mxLevel, '-bsp1', '-bso1')
         if ($pw) { $argList += @('-p', '-mhe=on') }
         if ($full) {
-            # 完整包：Data\ + Edge\（排除更新暂存目录 _old）
+            # 完整包：Data\ + Edge\（排除更新暂存目录 _old）+ 面板自身 EXE，换机时解压即用
             $argList += @($tmp, 'Data', 'Edge', '-x!Edge\_old', '-x!Edge\_old\*')
+            $selfExe = Get-PanelExePath
+            if ($selfExe -and ((Split-Path -Parent $selfExe).TrimEnd('\') -eq $pkgRoot.TrimEnd('\'))) {
+                $selfName = Split-Path -Leaf $selfExe
+                $argList += $selfName
+                Write-Log ('完整包同时打包面板自身：' + $selfName) 'ok'
+            } elseif ($selfExe) {
+                Write-Log ('面板不在包根（' + $selfExe + '），未打入完整包') 'warn'
+            }
         } else {
             $argList += @($tmp, 'Data')
         }
@@ -2639,7 +2658,8 @@ function Test-ArchiveSafe([string]$path, [string]$pw, [string]$packer) {
         $top = ($p0 -split '\\')[0]
         if ($top) { $tops[$top] = $true }
     }
-    $bad = @($tops.Keys | Where-Object { $_ -ne 'Data' -and $_ -ne 'Edge' })
+    # 完整包可能带一份面板 EXE（换机时解压即用）：只放行已知的两个名字，其它顶层项一律拒收
+    $bad = @($tops.Keys | Where-Object { $_ -ne 'Data' -and $_ -ne 'Edge' -and $_ -notmatch '^(?i)(EdgePanel|Edge面板)\.exe$' })
     if ($bad.Count -gt 0) {
         $out.Reason = ('包顶层不是 Data/Edge（发现：' + ($bad -join '、') + '），不像是本面板生成的备份')
         return $out
@@ -2793,6 +2813,11 @@ function Invoke-RestoreBackup([switch]$Auto) {
             throw $xWhy
         }
         Write-Log ('恢复[4/7] 解压完成（已用 ' + [math]::Round($swRestore.Elapsed.TotalSeconds, 1) + ' 秒）')
+        # 完整包里可能带了一份面板 EXE：只提示、不覆盖（本机正在运行、且可能比包里新）
+        $tmpExe = @(Get-ChildItem -LiteralPath $tmp -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(?i)(EdgePanel|Edge面板)\.exe$' })
+        if ($tmpExe.Count -gt 0) {
+            Write-Log ('包里带面板 ' + $tmpExe[0].Name + '（' + [math]::Round($tmpExe[0].Length / 1MB, 1) + ' MB）：本机保留当前面板不覆盖；换机时可直接从包里取出这个 EXE 使用') 'warn'
+        }
 
         # ⑤ 关键条目校验：Local State + Default\Preferences（Bookmarks/Cookies 只提示）
         Write-Log '恢复[5/7] 校验解压结果关键文件…'
