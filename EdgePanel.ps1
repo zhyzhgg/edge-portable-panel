@@ -4496,6 +4496,10 @@ Write-Log ('面板已启动；包根：' + $pkgRoot)
                 'ApplyRecommended' { Apply-RecommendedPolicies }
                 'BackupAll' { Invoke-CleanAndBackup }
         'BackupPlain' { Invoke-CleanAndBackup $true }   # 自测：一次不加密的备份
+        # 自测：加密备份（先写入固定测试密码，再强制备份）。用于回归验证 AES-256 与密码校验链路。
+        'BackupEnc'   { try { Set-BackupPw 'EdgePanelTest123' } catch { }; Invoke-CleanAndBackup -Force }
+        # 自测：zip 格式加密备份（ZipCrypto），验证 7za 的 zip 分支与文件名明文
+        'BackupZip'   { try { Set-BackupPw 'EdgePanelTest123' } catch { }; $c = Get-BackupCfg; $c.fmt = 'zip'; Save-BackupCfg $c; Invoke-CleanAndBackup -Force }
         'BackupForce' { Invoke-CleanAndBackup -Force }   # 自测：忽略指纹强制备份
         'BackupFull' { Invoke-CleanAndBackup -Force -Full }   # 自测：带本体完整包
         'BackupPanel' { Invoke-CleanAndBackup -Force -Panel }   # 自测：数据 + 面板

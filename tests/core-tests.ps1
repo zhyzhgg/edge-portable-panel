@@ -224,6 +224,73 @@ if (Want 'drift') {
     Assert-True 'drift' '首次比对返回快照' ($null -ne $first)
     # 设计意图：首次比对只返回快照，不落盘——由调用方在「覆盖成功」后才写，避免回滚时基线跟着跑偏
     Assert-True 'drift' '首次比对不落盘（基线延迟到覆盖成功后写）' (-not (Test-Path -LiteralPath (Join-Path $env:EP_RUNTIME 'cache\last_pkg_snapshot.json'))) ''
+    # ---- 漂移比对的 5 条分支（原来只测了「首次无基线」这一条）----
+    $snapFile = Join-Path $env:EP_RUNTIME 'cache\last_pkg_snapshot.json'
+
+    # 建立基线
+    Save-PkgSnapshot (Get-PkgSnapshot $e1 'test-scope') $snapFile
+    Assert-True 'drift' '基线已建立' (Test-Path -LiteralPath $snapFile)
+
+    # 分支 C：结构相同 → 不报警
+    $script:captured.Clear()
+    $null = Test-StructureDrift $e1 'test-scope'
+    Assert-Eq 'drift' '结构相同不产生任何告警' 0 $script:captured.Count
+
+    # 分支 D：新增文件 → 报「新增 1」
+    [System.IO.File]::WriteAllText((Join-Path $e1 '120.0.1.1\c.dll'), ('y' * 50))
+    $script:captured.Clear()
+    $null = Test-StructureDrift $e1 'test-scope'
+    $driftText = ($script:captured | ForEach-Object { $_.Text }) -join ' / '
+    Assert-True 'drift' '新增文件会报「新增 1」' ($driftText -match '新增 1') $driftText
+    Assert-True 'drift' '新增条目被逐条列出' ($driftText -match '\+ \{ver\}\\c\.dll') $driftText
+    Save-PkgSnapshot (Get-PkgSnapshot $e1 'test-scope') $snapFile   # 重设基线
+
+    # 分支 E：消失文件 → 报「消失 1」
+    Remove-Item -LiteralPath (Join-Path $e1 '120.0.1.1\c.dll') -Force
+    $script:captured.Clear()
+    $null = Test-StructureDrift $e1 'test-scope'
+    $driftText2 = ($script:captured | ForEach-Object { $_.Text }) -join ' / '
+    Assert-True 'drift' '消失文件会报「消失 1」' ($driftText2 -match '消失 1') $driftText2
+    Save-PkgSnapshot (Get-PkgSnapshot $e1 'test-scope') $snapFile
+
+    # 分支 F：scope 变了 → 判定不可比对并重建
+    $script:captured.Clear()
+    $null = Test-StructureDrift $e1 'another-scope'
+    $scopeText = ($script:captured | ForEach-Object { $_.Text }) -join ' / '
+    Assert-True 'drift' 'scope 变化时判定不可比对' ($scopeText -match '不可比对') $scopeText
+
+    # 分支 G：基线 JSON 损坏 → 告警并重建
+    [System.IO.File]::WriteAllText($snapFile, '{ 这不是合法 JSON ')
+    $script:captured.Clear()
+    $null = Test-StructureDrift $e1 'another-scope'
+    $brokenText = ($script:captured | ForEach-Object { $_.Text }) -join ' / '
+    Assert-True 'drift' '基线损坏时告警并要求重建' ($brokenText -match '损坏') $brokenText
+
+    # 分支 H：上游带回 msedge_renderer.dll → 单独告警
+    Save-PkgSnapshot (Get-PkgSnapshot $e1 'test-scope') $snapFile
+    [System.IO.File]::WriteAllText((Join-Path $e1 '120.0.1.1\msedge_renderer.dll'), ('z' * 1024))
+    $script:captured.Clear()
+    $null = Test-StructureDrift $e1 'test-scope'
+    $rendText = ($script:captured | ForEach-Object { $_.Text }) -join ' / '
+    Assert-True 'drift' 'renderer 回归时提示再瘦身' ($rendText -match 'msedge_renderer') $rendText
+    Remove-Item -LiteralPath (Join-Path $e1 '120.0.1.1\msedge_renderer.dll') -Force
+    Remove-Item -LiteralPath $snapFile -Force -ErrorAction SilentlyContinue
+
+    # ---- 版本归一化的边界 ----
+    # 目录名不是 x.x.x.x → 不做 {ver} 替换，version 为 null
+    $e2 = Join-Path $work 'snap-nover'
+    New-Item -ItemType Directory -Force -Path (Join-Path $e2 'not-a-version') | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $e2 'not-a-version\x.dll'), ('x' * 10))
+    $snap2 = Get-PkgSnapshot $e2 'nover'
+    Assert-True 'drift' '非版本目录名不做 {ver} 归一化' ($null -eq $snap2.version) ([string]$snap2.version)
+    Assert-True 'drift' '非版本目录名保留原相对路径' ($snap2.files.ContainsKey('not-a-version\x.dll')) (($snap2.files.PSObject.Properties.Name) -join ',')
+
+    # x.x.x.x.manifest 文件要归一化成 {ver}.manifest
+    $e3 = Join-Path $work 'snap-manifest'
+    New-Item -ItemType Directory -Force -Path (Join-Path $e3 '120.0.1.1') | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $e3 '120.0.1.1.manifest'), 'm')
+    $snap3 = Get-PkgSnapshot $e3 'mani'
+    Assert-True 'drift' '版本清单文件归一化成 {ver}.manifest' ($snap3.files.ContainsKey('{ver}.manifest')) (($snap3.files.PSObject.Properties.Name) -join ',')
 }
 
 # =====================================================================

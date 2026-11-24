@@ -148,8 +148,9 @@ policy_key=Portable
 }
 
 # ---------------- 运行一次面板 ----------------
-function Invoke-Panel([string]$action, [string]$pkgRoot, [string]$runtime) {
-    if (Test-Path -LiteralPath $runtime) { Remove-Item -LiteralPath $runtime -Recurse -Force }
+function Invoke-Panel([string]$action, [string]$pkgRoot, [string]$runtime, [switch]$KeepRuntime) {
+    # -KeepRuntime：不清运行时目录。加密备份后要在同一次 runtime 里复用已存密码做恢复验证。
+    if (-not $KeepRuntime -and (Test-Path -LiteralPath $runtime)) { Remove-Item -LiteralPath $runtime -Recurse -Force }
     New-Item -ItemType Directory -Force -Path $runtime | Out-Null
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -290,6 +291,102 @@ function Test-ScenarioBackup {
     Assert-True $sc '恢复日志有瘦身结论' ($rr.Log -match '恢复后瘦身') ''
 }
 
+function Test-ScenarioEncrypted {
+    # 加密备份 / 密码校验 / zip 格式 / 损坏包被拒。
+    # 用 -KeepRuntime 让「加密备份 → 加密恢复」共享同一次 runtime（密码存在 runtime 里）。
+    $sc = 'encrypted'
+    $pkg = New-Fixture (Join-Path $workRoot 'enc\pkg')
+    $rt = Join-Path $workRoot 'enc\rt'
+    $packer = Join-Path $repo 'tools\7za.exe'
+
+    # --- 1) 加密 7z 备份 ---
+    $r = Invoke-Case $sc 'BackupEnc' $pkg $rt
+    $pkgs = @(Get-ChildItem -LiteralPath $pkg -Filter 'Edge_Portable_Data_*.7z' -File -ErrorAction SilentlyContinue)
+    Assert-True $sc '产出加密 7z 备份' ($pkgs.Count -ge 1) ($pkgs.Count.ToString() + ' 个')
+    Assert-True $sc '日志声明已加密' ($r.Log -match '本次备份：已加密') ''
+
+    if ($pkgs.Count -ge 1) {
+        $arc = $pkgs[0].FullName
+        # 7za 用错密码时会往 stderr 打 "ERROR:"；本脚本 $ErrorActionPreference=Stop 会把它当异常抛出，
+        # 这里临时放宽，只取退出码。
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        & $packer t $arc -pEdgePanelTest123 2>&1 | Out-Null
+        $goodRc = $LASTEXITCODE
+        & $packer t $arc -pDefinitelyWrong 2>&1 | Out-Null
+        $badRc = $LASTEXITCODE
+        $ErrorActionPreference = $prevEap
+        Assert-True $sc '正确密码能打开加密包' ($goodRc -eq 0) ('exit=' + $goodRc)
+        Assert-True $sc '错误密码打不开加密包' ($badRc -ne 0) ('exit=' + $badRc)
+
+        # --- 2) 加密恢复（复用同一次 runtime 里已存的密码）---
+        $bm = Join-Path $pkg 'Data\Default\Bookmarks'
+        $before = (Get-Content -LiteralPath $bm -Raw -Encoding UTF8)
+        Set-Content -LiteralPath $bm -Value '{"roots":{"bookmark_bar":{"children":[{"name":"加密恢复前改动"}]}}}' -Encoding UTF8
+        $rr = Invoke-Panel 'Restore' $pkg $rt -KeepRuntime
+        Assert-True $sc '加密恢复退出码=0' ($rr.Code -eq 0) ('exit=' + $rr.Code)
+        $after = (Get-Content -LiteralPath $bm -Raw -Encoding UTF8)
+        Assert-True $sc '加密恢复后书签回到备份版本' ($after.Trim() -eq $before.Trim()) ''
+    }
+
+    # --- 3) zip 格式备份 ---
+    $rt2 = Join-Path $workRoot 'enc\rt-zip'
+    $null = Invoke-Case $sc 'BackupZip' $pkg $rt2
+    $zips = @(Get-ChildItem -LiteralPath $pkg -Filter 'Edge_Portable_Data_*.zip' -File -ErrorAction SilentlyContinue)
+    Assert-True $sc 'zip 格式备份产出 .zip' ($zips.Count -ge 1) ($zips.Count.ToString() + ' 个')
+
+    # --- 4) 损坏包必须被拒绝，且不能动现有数据 ---
+    $bad = Join-Path $pkg 'Edge_Portable_Data_20200101-000000.7z'
+    [System.IO.File]::WriteAllBytes($bad, [byte[]](1..64))
+    $bm2 = Join-Path $pkg 'Data\Default\Bookmarks'
+    $keep = (Get-Content -LiteralPath $bm2 -Raw -Encoding UTF8)
+    $rt3 = Join-Path $workRoot 'enc\rt-bad'
+    $rb = Invoke-Panel 'Restore' $pkg $rt3
+    $keepAfter = (Get-Content -LiteralPath $bm2 -Raw -Encoding UTF8)
+    Assert-True $sc '损坏包不导致进程异常退出' ($rb.Code -eq 0) ('exit=' + $rb.Code)
+    Assert-True $sc '损坏包不修改现有书签' ($keepAfter.Trim() -eq $keep.Trim()) ''
+    Remove-Item -LiteralPath $bad -Force -ErrorAction SilentlyContinue
+}
+function Test-ScenarioSpecialPaths {
+    # 特殊路径：同时含空格、中文、单引号。真实用户的目录很可能是这样，
+    # 而包含单引号会打穿「把路径拼进单引号字符串」的写法（core\status.ps1 就踩过）。
+    $sc = 'paths-special'
+    $base = Join-Path $env:TEMP "ep 回归 测试's"
+    if (Test-Path -LiteralPath $base) { Remove-Item -LiteralPath $base -Recurse -Force -ErrorAction SilentlyContinue }
+    $pkg = New-Fixture (Join-Path $base 'pkg dir')
+    $rt = Join-Path $base 'runtime'
+
+    # --- 1) Status：路径要穿过 Build-StatusScript 的字符串拼接 ---
+    $r = Invoke-Case $sc 'Status' $pkg $rt
+    Assert-True $sc '路径含空格/中文/引号时能启动' ($r.Log -match '面板已启动') ''
+    Assert-True $sc '状态脚本没因引号报语法错' (-not ($r.Log -match 'ParserError|Unexpected token|缺少终止符|Missing closing')) ''
+    Assert-True $sc '包根被正确识别' ($r.Log -match [regex]::Escape('pkg dir')) ''
+
+    # --- 2) SlimAll：路径要穿过 Invoke-Ps 的子进程参数 ---
+    $ver = Join-Path $pkg 'Edge\120.0.1.1'
+    $null = Invoke-Case $sc 'SlimAll' $pkg $rt
+    Assert-NoPath $sc '瘦身生效（renderer 已删）' (Join-Path $ver 'msedge_renderer.dll')
+    $ini = Join-Path $pkg 'Edge\chrome++.ini'
+    $cl = ''
+    if (Test-Path -LiteralPath $ini) {
+        $cl = (Get-Content -LiteralPath $ini -Encoding UTF8 | Where-Object { $_ -match '^\s*command_line\s*=' } | Select-Object -First 1)
+    }
+    Assert-True $sc 'ini 被改写（路径正确传到子脚本）' ($cl -match 'disable-component-update') $cl
+
+    # --- 3) 备份 + 恢复：路径要穿过 7za 的参数与目标目录解析 ---
+    $bm = Join-Path $pkg 'Data\Default\Bookmarks'
+    $before = (Get-Content -LiteralPath $bm -Raw -Encoding UTF8)
+    $null = Invoke-Case $sc 'BackupPlain' $pkg $rt
+    $pkgs = @(Get-ChildItem -LiteralPath $pkg -Filter '*.7z' -File -ErrorAction SilentlyContinue)
+    Assert-True $sc '特殊路径下备份产出了 7z' ($pkgs.Count -ge 1) ($pkgs.Count.ToString() + ' 个')
+
+    Set-Content -LiteralPath $bm -Value '{"roots":{"bookmark_bar":{"children":[{"name":"改动"}]}}}' -Encoding UTF8
+    $null = Invoke-Case $sc 'Restore' $pkg $rt
+    $after = (Get-Content -LiteralPath $bm -Raw -Encoding UTF8)
+    Assert-True $sc '特殊路径下恢复成功（书签回到备份版本）' ($after.Trim() -eq $before.Trim()) ''
+
+    if (Test-Path -LiteralPath $base) { Remove-Item -LiteralPath $base -Recurse -Force -ErrorAction SilentlyContinue }
+}
 function Test-ScenarioRefresh {
     $sc = 'refresh'
     $pkg = New-Fixture (Join-Path $workRoot 'refresh\pkg')
@@ -323,6 +420,8 @@ $scenarios = [ordered]@{
     'clean'   = { Test-ScenarioClean }
     'backup'  = { Test-ScenarioBackup }
     'refresh' = { Test-ScenarioRefresh }
+    'paths'   = { Test-ScenarioSpecialPaths }
+    'encrypted' = { Test-ScenarioEncrypted }
 }
 
 $swAll = [Diagnostics.Stopwatch]::StartNew()
