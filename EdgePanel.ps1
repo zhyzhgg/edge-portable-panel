@@ -3185,6 +3185,7 @@ function Show-PkgPickerDialog([string[]]$foundDirs, [string]$curExeDir, [string]
             $deepTimer.Add_Tick({
                 if ($prog) {
                     if ($state.Current) { $prog.File.Text = Format-MiddleEllipsisPath $state.Current $fontSmall ($prog.File.Width - (S 4)) }
+                    try { $prog.Form.BringToFront() } catch { }   # 进度窗不设 TopMost（避免压住任务管理器），靠每拍置前压住模态选择窗
                     if ($prog.Meta) { $prog.Meta.Text = ('{0} 目录 · {1} 份 · {2}s' -f [int]$state.Visited, [int]$state.Found, [int]$deepSw.Elapsed.TotalSeconds) }
                 }
                 if ($state.Done) {
