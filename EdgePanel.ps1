@@ -677,7 +677,7 @@ function Enable-DoubleBuffer($c) {
 }
 # 顶栏第二行：路径（左键打开目录）+ 「· 切换目录」（X=20 对齐上方大标题左墨迹，NoPadding 紧贴收口，长路径中段省略+悬停全显）
 $script:noPadMeasure = [System.Windows.Forms.TextFormatFlags]::NoPadding -bor [System.Windows.Forms.TextFormatFlags]::NoPrefix
-$swLinkW = [int][math]::Max((S 56), ([System.Windows.Forms.TextRenderer]::MeasureText('切换目录', $fontSmall, (New-Object System.Drawing.Size(9999, 9999)), $script:noPadMeasure).Width + (S 2)))
+$swLinkW = [int][math]::Max((S 56), ([System.Windows.Forms.TextRenderer]::MeasureText('切换目录', $fontSub, (New-Object System.Drawing.Size(9999, 9999)), $script:noPadMeasure).Width + (S 2)))
 $swSepW = S 8
 $subMaxW = (S 404) - $swSepW - $swLinkW - (S 4)
 $lblSub = New-Object System.Windows.Forms.Label
@@ -703,7 +703,7 @@ $header.Controls.Add($lblSub)
 
 $script:lblSubSep = New-Object System.Windows.Forms.Label
 $script:lblSubSep.Text = '·'
-$script:lblSubSep.Font = $fontSmall
+$script:lblSubSep.Font = $fontSub
 $script:lblSubSep.ForeColor = [System.Drawing.Color]::FromArgb(115, $clrOnDarkMuted)
 $script:lblSubSep.AutoSize = $false
 $script:lblSubSep.TextAlign = 'MiddleCenter'
@@ -713,11 +713,11 @@ $header.Controls.Add($script:lblSubSep)
 
 $script:btnSwitchPkg = New-Object System.Windows.Forms.Label
 $script:btnSwitchPkg.Text = '切换目录'
-$script:btnSwitchPkg.Font = $fontSmall
+$script:btnSwitchPkg.Font = $fontSub
 $script:btnSwitchPkg.ForeColor = $clrOnDarkMuted
 $script:btnSwitchPkg.AutoSize = $false
 $script:btnSwitchPkg.TextAlign = 'MiddleLeft'
-$script:btnSwitchPkg.Location = New-Object System.Drawing.Point([int]($script:lblSubSep.Right + (S 2)), (S 41))
+    $script:btnSwitchPkg.Location = New-Object System.Drawing.Point([int]($script:lblSubSep.Right + (S 2)), ((S 41) + (S 1)))   # 中文墨迹比同 Y 的拉丁高 1px，下移补偿
 $script:btnSwitchPkg.Size = New-Object System.Drawing.Size($swLinkW, (S 20))
 $script:btnSwitchPkg.Cursor = 'Hand'
 $script:btnSwitchPkg.Add_MouseEnter({ if ($script:btnSwitchPkg.Enabled) { $script:btnSwitchPkg.ForeColor = $clrHeaderAccent } })
@@ -2382,7 +2382,13 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     try {
         $edgeDirDlg = Join-Path $pkgRoot 'Edge'
         if (Test-Path -LiteralPath $edgeDirDlg) {
-            $edgeSum = (Get-ChildItem -LiteralPath $edgeDirDlg -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
+                # 用 .NET 枚举直接累加长度：不产生 PSObject，比 Get-ChildItem -Recurse 快一个数量级
+                $edgeSum = 0
+                try {
+                    foreach ($fOne in [System.IO.Directory]::EnumerateFiles($edgeDirDlg, '*', [System.IO.SearchOption]::AllDirectories)) {
+                        try { $edgeSum += (New-Object System.IO.FileInfo($fOne)).Length } catch { }
+                    }
+                } catch { }
             if ($edgeSum -gt 0) { $edgeMbTxt = [string][math]::Round(($edgeSum / 1MB) * $edgeRatio) }
         }
     } catch { }
@@ -3110,36 +3116,22 @@ function Show-PkgPickerDialog([string[]]$foundDirs, [string]$curExeDir, [string]
     $wBrowse = [int][math]::Max((S 98), ([System.Windows.Forms.TextRenderer]::MeasureText('浏览目录…', $fontBase).Width + (S 24)))
     $btnDeep = New-DialogBtn $ft.Footer $pad (S 13) $wDeep (S 30) '深度搜索…' 'secondary'
     $btnDeep.Add_Click({
+        if (-not $btnDeep.Enabled) { return }
         $btnDeep.Enabled = $false
-        $prog = $null
-        try {
-            $script:progressStop = $false
-            $prog = Show-ProgressWindow '正在深度搜索便携 Edge' -Stoppable -TopMost
-            $deepSw = [Diagnostics.Stopwatch]::StartNew()
-            if ($prog) {
-                $prog.Bar.Indeterminate = $true
-                $prog.Status.Text = '正在深度搜索便携 Edge（最多 4 层）…'
-                if ($prog.Meta) { $prog.Meta.Text = '准备中…' }
-                [System.Windows.Forms.Application]::DoEvents()
-            }
-            $script:deepLastVis = 0
-            $deepDirs = @(Find-PortableEdgeDirsDeep 4 {
-                param($curP, $vis, $hit)
-                $script:deepLastVis = $vis
-                if ($script:closeRequested -or $dlg.IsDisposed -or $script:progressStop) { return $false }
-                if ($deepSw.Elapsed.TotalSeconds -ge 60) { $script:progressStop = $true; return $false }
-                if ($prog) {
-                    $prog.File.Text = Format-MiddleEllipsisPath $curP $fontSmall ($prog.File.Width - (S 4))
-                    if ($prog.Meta) { $prog.Meta.Text = ('{0} 目录 · {1} 份 · {2}s' -f $vis, $hit, [int]$deepSw.Elapsed.TotalSeconds) }
-                }
-                [System.Windows.Forms.Application]::DoEvents()
-                return $true
-            } { $script:progressStop })
-            if ($script:deepStopped -and $prog) { Write-Log ('深度搜索已停止（已扫 ' + $script:deepLastVis + ' 个目录）') 'warn' }
-            $list.Items.Clear()
-            $choices.Clear()
-            $newDef = 0
-            foreach ($d in $deepDirs) {
+        # 深搜必须在后台 Runspace 里跑：UI 线程同步枚举全盘会堵死消息泵，连带 explorer / DWM 的跨进程消息一起死等
+        $state = [hashtable]::Synchronized(@{ Stop = $false; Current = ''; Visited = 0; Found = 0; Done = $false; Error = ''; Result = @() })
+        $prog = $null; $deepRs = $null; $deepPs = $null; $deepTimer = $null; $deepSw = $null
+        $finishDeep = {
+            try { if ($deepTimer) { $deepTimer.Stop(); $deepTimer.Dispose() } } catch { }
+            if ($prog) { try { $prog.Close() } catch { } }
+            try { if ($deepPs) { $deepPs.Dispose() } } catch { }
+            try { if ($deepRs) { $deepRs.Close(); $deepRs.Dispose() } } catch { }
+            $prog = $null; $deepTimer = $null; $deepPs = $null; $deepRs = $null
+            if (-not $btnDeep.IsDisposed) { $btnDeep.Enabled = $true }
+        }
+        $renderDeep = {
+            $list.Items.Clear(); $choices.Clear(); $newDef = 0
+            foreach ($d in @($state.Result)) {
                 $vd = Resolve-VersionDir (Join-Path $d 'Edge') 'msedge.exe'
                 $vt = if ($vd) { Split-Path -Leaf $vd } else { '已就绪' }
                 $mk = if ($lastSaved -and $d.Equals($lastSaved, [System.StringComparison]::OrdinalIgnoreCase)) { '（上次）' } else { '' }
@@ -3147,15 +3139,67 @@ function Show-PkgPickerDialog([string[]]$foundDirs, [string]$curExeDir, [string]
                 [void]$list.Items.Add(('{0} ｜ {1}{2}' -f $d, $vt, $mk))
                 if ($mk) { $newDef = $ix }
             }
-            if ($allowDeployHere -and $curExeDir -and (-not ($deepDirs -contains $curExeDir.TrimEnd('\')))) {
+            if ($allowDeployHere -and $curExeDir -and (-not (@($state.Result) -contains $curExeDir.TrimEnd('\')))) {
                 [void]$choices.Add([pscustomobject]@{ Kind = 'deploy'; Path = $curExeDir })
                 [void]$list.Items.Add(('在当前目录全新部署 ｜ ' + $curExeDir))
             }
             if ($list.Items.Count -gt 0) { $list.SelectedIndex = $newDef }
-            Write-Log ('深度搜索完成：发现 ' + $deepDirs.Count + ' 份便携 Edge') 'ok'
-        } finally {
-            if ($prog) { try { $prog.Close() } catch { } }
-            if (-not $btnDeep.IsDisposed) { $btnDeep.Enabled = $true }
+        }
+        try {
+            $prog = Show-ProgressWindow '正在深度搜索便携 Edge' -Stoppable
+            if ($prog) {
+                $prog.Bar.Indeterminate = $true
+                $prog.Status.Text = '正在深度搜索便携 Edge（最多 4 层）…'
+                if ($prog.Meta) { $prog.Meta.Text = '准备中…' }
+                # 停止：只置标志并立刻关窗；后台每轮都会看到 Stop，不会再卡在「停止中…」
+                $prog.StopBtn.Add_Click({
+                    $state.Stop = $true
+                    try { if ($deepTimer) { $deepTimer.Stop() } } catch { }
+                    Write-Log ('深度搜索已停止（已扫 ' + [int]$state.Visited + ' 个目录）') 'warn'
+                    if ($prog) { try { $prog.Close() } catch { } }
+                    if (-not $btnDeep.IsDisposed) { $btnDeep.Enabled = $true }
+                })
+            }
+            $deepRs = [runspacefactory]::CreateRunspace()
+            $deepRs.ThreadOptions = 'ReuseThread'
+            $deepRs.Open()
+            $deepPs = [powershell]::Create()
+            $deepPs.Runspace = $deepRs
+            [void]$deepPs.AddScript({
+                param($st, $depth, $appDir)
+                try {
+                    . (Join-Path $appDir '_Common.ps1')
+                    $res = @(Find-PortableEdgeDirsDeep $depth {
+                        param($p, $v, $f)
+                        $st.Current = $p; $st.Visited = $v; $st.Found = $f
+                        return $true
+                    } { $st.Stop })
+                    $st.Result = $res
+                } catch { $st.Error = $_.Exception.Message }
+                finally { $st.Done = $true }
+            }).AddArgument($state).AddArgument(4).AddArgument($scriptsDir)
+            [void]$deepPs.BeginInvoke()
+            $deepSw = [Diagnostics.Stopwatch]::StartNew()
+            $deepTimer = New-Object System.Windows.Forms.Timer
+            $deepTimer.Interval = 100
+            $deepTimer.Add_Tick({
+                if ($prog) {
+                    if ($state.Current) { $prog.File.Text = Format-MiddleEllipsisPath $state.Current $fontSmall ($prog.File.Width - (S 4)) }
+                    if ($prog.Meta) { $prog.Meta.Text = ('{0} 目录 · {1} 份 · {2}s' -f [int]$state.Visited, [int]$state.Found, [int]$deepSw.Elapsed.TotalSeconds) }
+                }
+                if ($state.Done) {
+                    $deepTimer.Stop()
+                    if ($state.Error) { Write-Log ('深度搜索失败：' + $state.Error) 'err' }
+                    & $renderDeep
+                    if ($state.Stop) { Write-Log ('深度搜索已停止（已扫 ' + [int]$state.Visited + ' 个目录）') 'warn' }
+                    else { Write-Log ('深度搜索完成：发现 ' + @($state.Result).Count + ' 份便携 Edge') 'ok' }
+                    & $finishDeep
+                }
+            })
+            $deepTimer.Start()
+        } catch {
+            Write-Log ('深搜启动失败：' + $_.Exception.Message) 'err'
+            & $finishDeep
         }
     })
     $btnBrowse = New-DialogBtn $ft.Footer ($pad + $wDeep + (S 8)) (S 13) $wBrowse (S 30) '浏览目录…' 'secondary'
@@ -3196,7 +3240,7 @@ function Update-PathLabel {
     }
     if ($script:btnSwitchPkg) {
         $swX = if ($script:lblSubSep) { $script:lblSubSep.Right + (S 2) } else { $lblSub.Right + (S 10) }
-        $script:btnSwitchPkg.Location = New-Object System.Drawing.Point([int]$swX, (S 41))
+        $script:btnSwitchPkg.Location = New-Object System.Drawing.Point([int]$swX, ((S 41) + (S 1)))
     }
     if ($script:tip) {
         $script:tip.SetToolTip($lblSub, ('单击在资源管理器中打开目录：' + $pkgRoot))
@@ -4935,6 +4979,7 @@ Write-Log ('面板已启动；包根：' + $pkgRoot)
 
 $form.ResumeLayout($false)
 [void]$form.ShowDialog()
+
 
 
 

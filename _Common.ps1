@@ -188,6 +188,7 @@ function Find-PortableEdgeDirsDeep([int]$maxDepth = 4, [scriptblock]$onProgress 
     }
     $visited = 0
     $script:deepStopped = $false
+    $script:deepAbort = $false
     $uiSw = [System.Diagnostics.Stopwatch]::StartNew()
     $lastUiMs = -1000
     while ($q.Count -gt 0) {
@@ -211,8 +212,12 @@ function Find-PortableEdgeDirsDeep([int]$maxDepth = 4, [scriptblock]$onProgress 
         }
         if ($dep -ge $maxDepth) { continue }
         $scanRoot = if ($dep -eq 0) { $p + '\' } else { $p }
+        $innerSeen = 0
         try {
             foreach ($subPath in [System.IO.Directory]::EnumerateDirectories($scanRoot)) {
+                # 内层也要能中断：慢盘/大目录里枚举一卡住，只有外层检查就永远停不下来
+                $innerSeen++
+                if ($stopTest -and ($innerSeen -band 0x3F) -eq 0 -and (& $stopTest)) { $script:deepStopped = $true; $script:deepAbort = $true; break }
                 $name = [System.IO.Path]::GetFileName($subPath)
                 if ([string]::IsNullOrEmpty($name) -or $name.StartsWith('$') -or $skip.Contains($name)) { continue }
                 try {
@@ -222,6 +227,7 @@ function Find-PortableEdgeDirsDeep([int]$maxDepth = 4, [scriptblock]$onProgress 
                 $q.Enqueue([pscustomobject]@{ Path = $subPath; Depth = ($dep + 1) })
             }
         } catch { }
+        if ($script:deepAbort) { break }
     }
     return @($found)
 }
