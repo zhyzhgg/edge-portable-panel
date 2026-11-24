@@ -2263,6 +2263,12 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $pad = S 16
     $inner = $w - 2 * $pad
     $dlg = New-DialogBase '备份用户数据' $w
+    # 弹窗专属 ToolTip：把主窗体的 $script:tip 绑到独立模态子弹窗的控件上经常不触发（实测），
+    # 这里给本弹窗单独建一个，ShowAlways 保证悬停稳定出提示，关窗时 Dispose。
+    $dlgTip = New-Object System.Windows.Forms.ToolTip
+    $dlgTip.ShowAlways = $true
+    $dlgTip.InitialDelay = 300
+    $dlgTip.AutoPopDelay = 20000
 
     $lead = if ($edgeRunning) { '备份前将先关闭 Edge 并清理缓存，' } else { '备份前将先清理缓存，' }
     $textTop = $lead + "书签、扩展与登录状态均完整保留。"
@@ -2416,16 +2422,16 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
         $isCustom = -not [string]::IsNullOrWhiteSpace($d)
         if (-not $isCustom) {
             $lbDir.Text = '备份到：包根目录'
-            if ($script:tip) { $script:tip.SetToolTip($lbDir, ('当前备份到默认包根目录：' + $pkgRoot)) }
+            if ($dlgTip) { $dlgTip.SetToolTip($lbDir, ('当前备份到默认包根目录：' + $pkgRoot)) }
         } else {
             $prefixW = [System.Windows.Forms.TextRenderer]::MeasureText('备份到：', $fontBase).Width
             $dispPath = Format-MiddleEllipsisPath $d $fontBase ([int][math]::Max((S 40), ($lbDirW - $prefixW - (S 4))))
             $lbDir.Text = '备份到：' + $dispPath
-            if ($script:tip) { $script:tip.SetToolTip($lbDir, ('备份保存目录：' + $d)) }
+            if ($dlgTip) { $dlgTip.SetToolTip($lbDir, ('备份保存目录：' + $d)) }
         }
         $btnResetDir.Enabled = $isCustom
     }
-    if ($script:tip) { $script:tip.SetToolTip($btnResetDir, '一键恢复为默认备份目录（包根目录）') }
+    if ($dlgTip) { $dlgTip.SetToolTip($btnResetDir, '一键恢复为默认备份目录（包根目录）') }
     & $showDir
     $btnResetDir.Add_Click({ $script:pendingBackupDir = ''; & $showDir })
     $btnDir.Add_Click({
@@ -2433,20 +2439,23 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
         if ($gotDir) { $script:pendingBackupDir = $gotDir; & $showDir }
     })
 
-    # ── 格式行：7z（高压缩）/ zip（Win10 自带解压兼容，需内置 7za.exe）──
+    # ── 格式行：(●) 7z / ( ) zip；下一行：[ ] 面板程序 / [ ] 浏览器程序
+    # 行标签直接挂在控件左侧（不再单独占一列）：两个标签都是 4 字、等宽，控件起点天然对齐，
+    # 也不会像之前那样在 125% DPI 下因为标签列变宽而多出一条"孤立纵线"。
     [void](Find-Packer)
     $fmtY = $row2Y + (S 30) + (S 10)
-    # 左侧 4 字对齐列（压缩格式 / 同时包含）+ 严格两列对齐原生控件，同高同 Y 纵向严格居中，体积估算迁入悬停提示
-    $wRowLbl = [int][math]::Max((S 64), ((Measure-TextWidthDpi '压缩格式' $fontBase) + (S 10)))
-    $col1X = $pad + $wRowLbl + (S 8)
-    $wCol1 = [int][math]::Max(((Measure-TextWidthDpi '7z（高压缩）' $fontBase) + (S 28)), ((Measure-TextWidthDpi '面板程序' $fontBase) + (S 28)))
-    $col2X = $col1X + $wCol1 + (S 14)
-    $wCol2 = $w - $pad - $col2X
+    $lblW = [int][math]::Max(((Measure-TextWidthDpi '压缩格式' $fontBase) + (S 10)), ((Measure-TextWidthDpi '同时备份' $fontBase) + (S 10)))
+    $wRb7z  = [int]((Measure-TextWidthDpi '7z（高压缩）' $fontBase) + (S 30))
+    $wChkP  = [int]((Measure-TextWidthDpi '面板程序' $fontBase) + (S 30))
+    $segA   = $pad + $lblW + $wRb7z
+    $segB   = $pad + $lblW + $wChkP
+    $col2X  = [int][math]::Max($segA, $segB) + (S 24)
+    $wCol2  = [int](($w - $pad) - $col2X)
 
     $lbFmt = New-Object System.Windows.Forms.Label
     $lbFmt.Text = '压缩格式'
     $lbFmt.AutoSize = $false
-    $lbFmt.Size = New-Object System.Drawing.Size($wRowLbl, (S 24))
+    $lbFmt.Size = New-Object System.Drawing.Size($lblW, (S 24))
     $lbFmt.TextAlign = 'MiddleLeft'
     $lbFmt.ForeColor = $clrText
     $lbFmt.Location = New-Object System.Drawing.Point($pad, $fmtY)
@@ -2455,11 +2464,11 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $rb7z = New-Object System.Windows.Forms.RadioButton
     $rb7z.Text = '7z（高压缩）'
     $rb7z.AutoSize = $false
-    $rb7z.Size = New-Object System.Drawing.Size($wCol1, (S 24))
+    $rb7z.Size = New-Object System.Drawing.Size($wRb7z, (S 24))
     $rb7z.CheckAlign = 'MiddleLeft'
     $rb7z.TextAlign = 'MiddleLeft'
     $rb7z.ForeColor = $clrText
-    $rb7z.Location = New-Object System.Drawing.Point($col1X, $fmtY)
+    $rb7z.Location = New-Object System.Drawing.Point(($pad + $lblW), $fmtY)
     $dlg.Controls.Add($rb7z)
 
     $rbZip = New-Object System.Windows.Forms.RadioButton
@@ -2471,14 +2480,14 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $rbZip.ForeColor = $clrText
     $rbZip.Location = New-Object System.Drawing.Point($col2X, $fmtY)
     $rbZip.Enabled = [bool]$script:packerSupportsZip
-    if (-not $script:packerSupportsZip) { $script:tip.SetToolTip($rbZip, '需在编译时放入 tools\7za.exe 才支持 zip 格式') }
+    if (-not $script:packerSupportsZip) { $dlgTip.SetToolTip($rbZip, '需在编译时放入 tools\7za.exe 才支持 zip 格式') }
     $dlg.Controls.Add($rbZip)
 
     $useZip0 = ($cfg.fmt -eq 'zip') -and [bool]$script:packerSupportsZip
     $rb7z.Checked = (-not $useZip0)
     $rbZip.Checked = $useZip0
 
-    # 体积按压缩后贡献估算并放进悬停提示（保持选项行零括号、严格对齐）
+    # 体积按压缩后贡献估算并放进悬停提示（保持选项行零括号）
     $edgeRatio = 0.39
     $panelRatio = 0.99
     $panelMbTxt = '0.6'
@@ -2492,23 +2501,23 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     try {
         $edgeDirDlg = Join-Path $pkgRoot 'Edge'
         if (Test-Path -LiteralPath $edgeDirDlg) {
-                # 用 .NET 枚举直接累加长度：不产生 PSObject，比 Get-ChildItem -Recurse 快一个数量级
-                $edgeSum = 0
-                try {
-                    foreach ($fOne in [System.IO.Directory]::EnumerateFiles($edgeDirDlg, '*', [System.IO.SearchOption]::AllDirectories)) {
-                        try { $edgeSum += (New-Object System.IO.FileInfo($fOne)).Length } catch { }
-                    }
-                } catch { }
+            # 用 .NET 枚举直接累加长度：不产生 PSObject，比 Get-ChildItem -Recurse 快一个数量级
+            $edgeSum = 0
+            try {
+                foreach ($fOne in [System.IO.Directory]::EnumerateFiles($edgeDirDlg, '*', [System.IO.SearchOption]::AllDirectories)) {
+                    try { $edgeSum += (New-Object System.IO.FileInfo($fOne)).Length } catch { }
+                }
+            } catch { }
             if ($edgeSum -gt 0) { $edgeMbTxt = [string][math]::Round(($edgeSum / 1MB) * $edgeRatio) }
         }
     } catch { }
 
-    # ── 同时包含行：严格与上方 7z / zip 两列对齐，同高同 Y 纵向居中 ──
-    $rowY = $fmtY + (S 28) + (S 4)
+    # ── 同时备份行：与上一行共用 $lblW / $col2X，同高同 Y ──
+    $rowY = $fmtY + (S 26) + (S 4)
     $lbInc = New-Object System.Windows.Forms.Label
-    $lbInc.Text = '同时包含'
+    $lbInc.Text = '同时备份'
     $lbInc.AutoSize = $false
-    $lbInc.Size = New-Object System.Drawing.Size($wRowLbl, (S 24))
+    $lbInc.Size = New-Object System.Drawing.Size($lblW, (S 24))
     $lbInc.TextAlign = 'MiddleLeft'
     $lbInc.ForeColor = $clrText
     $lbInc.Location = New-Object System.Drawing.Point($pad, $rowY)
@@ -2517,12 +2526,12 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $chkPanel = New-Object System.Windows.Forms.CheckBox
     $chkPanel.Text = '面板程序'
     $chkPanel.AutoSize = $false
-    $chkPanel.Size = New-Object System.Drawing.Size($wCol1, (S 24))
+    $chkPanel.Size = New-Object System.Drawing.Size($wChkP, (S 24))
     $chkPanel.CheckAlign = 'MiddleLeft'
     $chkPanel.TextAlign = 'MiddleLeft'
     $chkPanel.Checked = [bool]$cfg.panel
     $chkPanel.ForeColor = $clrText
-    $chkPanel.Location = New-Object System.Drawing.Point($col1X, $rowY)
+    $chkPanel.Location = New-Object System.Drawing.Point(($pad + $lblW), $rowY)
     $dlg.Controls.Add($chkPanel)
 
     $chkFull = New-Object System.Windows.Forms.CheckBox
@@ -2538,28 +2547,17 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
 
     $tipPanelTxt = ('一并打包面板 EXE（压缩后约 +' + $panelMbTxt + ' MB），换机解压双击即可部署 Edge')
     $tipFullTxt = $(if ($edgeMbTxt) { '一并打包 Edge 程序目录（压缩后约 +' + $edgeMbTxt + ' MB），适合离线换机或重装' } else { '当前目录未检测到 Edge 程序，仅打包用户数据' })
-    $script:tip.SetToolTip($chkPanel, $tipPanelTxt)
-    $script:tip.SetToolTip($chkFull, $tipFullTxt)
-
-    $fullNoteText = '所有备份共用上方保留份数，按时间自动轮转。'
-    $fullNoteY = $rowY + (S 26) + (S 2)
-    $hFullNote = Get-TextHeight $fullNoteText $fontSmall $inner
-    $fullNote = New-Object System.Windows.Forms.Label
-    $fullNote.AutoSize = $false
-    $fullNote.Font = $fontSmall
-    $fullNote.Size = New-Object System.Drawing.Size($inner, ($hFullNote + (S 2)))
-    $fullNote.Location = New-Object System.Drawing.Point($pad, $fullNoteY)
-    $fullNote.ForeColor = $clrMuted
-    $fullNote.Text = $fullNoteText
-    $dlg.Controls.Add($fullNote)
+    $dlgTip.SetToolTip($chkPanel, $tipPanelTxt)
+    $dlgTip.SetToolTip($chkFull, $tipFullTxt)
 
     # ── 统一底部操作栏（恢复入口已挪到主界面「缓存与备份」组）──
-    [void](Add-DialogFooter $dlg $w ($fullNoteY + $hFullNote) '开始备份' 'primary')
+    [void](Add-DialogFooter $dlg $w ($rowY + (S 26)) '开始备份' 'primary')
     $res = $dlg.ShowDialog($form)
     $enc = [bool]$chk.Checked
     $keep = Normalize-Keep $boxKeep.Text
     $dirOut = [string]$script:pendingBackupDir
     $script:pendingBackupDir = ''
+    try { $dlgTip.Dispose() } catch { }   # 弹窗销毁前释放专属 ToolTip
     $dlg.Dispose()
     $fmtOut = if ($rbZip.Checked -and $script:packerSupportsZip) { 'zip' } else { '7z' }
     return @{ Start = ($res -eq 'OK'); Encrypt = $enc; Fmt = $fmtOut; Keep = $keep; Dir = $dirOut; Full = [bool]$chkFull.Checked; Panel = [bool]$chkPanel.Checked }
