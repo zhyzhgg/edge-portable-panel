@@ -118,7 +118,7 @@ function Remove-OldBackups([string]$dir, [int]$keep = 10) {
     $old = @($files | Sort-Object LastWriteTime -Descending | Select-Object -Skip $keep)
     $n = 0
     foreach ($f in $old) {
-        try { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop; $n++ } catch { }
+        try { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop; $n++ } catch { Say ('  旧备份删不掉（' + $_.Exception.Message + '）：' + $f.Name) 'Yellow' }
     }
     return $n
 }
@@ -143,6 +143,26 @@ function Read-IniState([string]$ini) {
     }
 }
 
+# ---- ini 落盘的两个公共步骤（三个 Set-* 函数共用，改一处不再漏两处）----
+function Backup-IniFile([string]$ini) {
+    <#  备份 ini 到运行时备份目录，保留最近 10 份，返回备份路径。
+        与 Remove-OldBackups 配合：只清本脚本产生的 ini.*.bak，不碰别的项目文件。 #>
+    if (-not (Test-Path -LiteralPath $backupDir)) { New-Item -ItemType Directory -Path $backupDir -Force | Out-Null }
+    $bak = Join-Path $backupDir ('ini.' + (Get-Date).ToString('yyyyMMdd-HHmmss') + '.bak')
+    Copy-Item -LiteralPath $ini -Destination $bak -Force
+    $pruned = Remove-OldBackups $backupDir 10
+    if ($pruned -gt 0) { Say ("  已清理 $pruned 个旧备份（保留最近 10 份）") 'DarkGray' }
+    return $bak
+}
+
+function Save-IniCommandLine([string]$ini, $state, [string]$newVal) {
+    <#  把 command_line 写回并落盘：保持原文件的编码与换行风格。
+        $newVal 必须是「已包含行尾空白」的完整值——不同调用方对 Trail 的处理不同，这里不做猜测。 #>
+    $state.Lines[$state.Index] = 'command_line=' + $newVal
+    $out = ($state.Lines -join $state.Nl)
+    if (-not $out.EndsWith($state.Nl)) { $out += $state.Nl }
+    [System.IO.File]::WriteAllText($ini, $out, $state.Enc)
+}
 function Set-ComponentUpdate([string]$ini, [bool]$disable) {
     $s = Read-IniState $ini
     if ($s.Index -lt 0) { Say '[错误] ini 里没有 command_line 行，未改动。' 'Red'; return $false }
@@ -151,16 +171,8 @@ function Set-ComponentUpdate([string]$ini, [bool]$disable) {
     $newVal = if ($disable) { $s.Value + ' ' + $flag + $s.Trail }
               else { (($s.Value -replace ('\s*' + [regex]::Escape($flag)), '') -replace '\s{2,}', ' ').TrimEnd() + $s.Trail }
 
-    if (-not (Test-Path -LiteralPath $backupDir)) { New-Item -ItemType Directory -Path $backupDir -Force | Out-Null }
-    $bak = Join-Path $backupDir ('ini.' + (Get-Date).ToString('yyyyMMdd-HHmmss') + '.bak')
-    Copy-Item -LiteralPath $ini -Destination $bak -Force
-    $pruned = Remove-OldBackups $backupDir 10
-    if ($pruned -gt 0) { Say ("  已清理 $pruned 个旧备份（保留最近 10 份）") 'DarkGray' }
-
-    $s.Lines[$s.Index] = 'command_line=' + $newVal
-    $out = ($s.Lines -join $s.Nl)
-    if (-not $out.EndsWith($s.Nl)) { $out += $s.Nl }
-    [System.IO.File]::WriteAllText($ini, $out, $s.Enc)
+    $bak = Backup-IniFile $ini
+    Save-IniCommandLine $ini $s $newVal
 
     Say ('已' + $(if ($disable) { '关闭' } else { '恢复' }) + '组件更新。') 'Green'
     Say ('  command_line = ' + $newVal.Trim())
@@ -196,15 +208,8 @@ function Set-IniFeature([string]$ini, [string]$feature, [bool]$enable, [string]$
         if ($joined) { ($val + ' ' + $Switch + '=' + $joined).Trim() } else { $val }
     }
 
-    if (-not (Test-Path -LiteralPath $backupDir)) { New-Item -ItemType Directory -Path $backupDir -Force | Out-Null }
-    $bak = Join-Path $backupDir ('ini.' + (Get-Date).ToString('yyyyMMdd-HHmmss') + '.bak')
-    Copy-Item -LiteralPath $ini -Destination $bak -Force
-    [void](Remove-OldBackups $backupDir 10)
-
-    $s.Lines[$s.Index] = 'command_line=' + $newVal + $s.Trail
-    $out = ($s.Lines -join $s.Nl)
-    if (-not $out.EndsWith($s.Nl)) { $out += $s.Nl }
-    [System.IO.File]::WriteAllText($ini, $out, $s.Enc)
+    $bak = Backup-IniFile $ini
+    Save-IniCommandLine $ini $s ($newVal + $s.Trail)
 
     Say ('已' + $(if ($enable) { '加入' } else { '移出' }) + $lstName + '：' + $feature) 'Green'
     Say ('  command_line = ' + $newVal)
@@ -256,15 +261,8 @@ function Set-IniFlags([string]$ini, [string[]]$flags) {
     if ($missing.Count -eq 0) { Say '静态开关已齐全，无需修改。' 'Green'; return $true }
 
     $newVal = ((($tokens + $missing) -join ' ') + $s.Trail)
-    if (-not (Test-Path -LiteralPath $backupDir)) { New-Item -ItemType Directory -Path $backupDir -Force | Out-Null }
-    $bak = Join-Path $backupDir ('ini.' + (Get-Date).ToString('yyyyMMdd-HHmmss') + '.bak')
-    Copy-Item -LiteralPath $ini -Destination $bak -Force
-    [void](Remove-OldBackups $backupDir 10)
-
-    $s.Lines[$s.Index] = 'command_line=' + $newVal
-    $out = ($s.Lines -join $s.Nl)
-    if (-not $out.EndsWith($s.Nl)) { $out += $s.Nl }
-    [System.IO.File]::WriteAllText($ini, $out, $s.Enc)
+    $bak = Backup-IniFile $ini
+    Save-IniCommandLine $ini $s $newVal
 
     Say ('已并入静态开关：' + ($missing -join ' ')) 'Green'
     Say ('  command_line = ' + $newVal.Trim())

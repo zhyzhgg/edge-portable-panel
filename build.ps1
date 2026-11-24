@@ -40,6 +40,12 @@ if (-not (Test-Path -LiteralPath $hostCs)) { throw "找不到 Host.cs：$hostCs"
 # ---- 需要内嵌的资源清单 ----
 $resources = [ordered]@{
     'EdgePanel.ps1'                        = 'app/EdgePanel.ps1'
+    'core\log.ps1'                         = 'app/core/log.ps1'
+    'core\paths.ps1'                       = 'app/core/paths.ps1'
+    'core\system.ps1'                      = 'app/core/system.ps1'
+    'core\pkg.ps1'                         = 'app/core/pkg.ps1'
+    'core\status.ps1'                      = 'app/core/status.ps1'
+    'ui\log-view.ps1'                      = 'app/ui/log-view.ps1'
     '_Common.ps1'                          = 'app/_Common.ps1'
     'EdgeTune.ps1'                         = 'app/EdgeTune.ps1'
     'Clean-EdgeCaches.ps1'                 = 'app/Clean-EdgeCaches.ps1'
@@ -93,6 +99,12 @@ $epText = [System.IO.File]::ReadAllText((Join-Path $src 'EdgePanel.ps1'), [Syste
 $mEpVer = [regex]::Match($epText, '\$script:panelVersion\s*=\s*''([^'']+)''')
 $mHostVer = [regex]::Match($text, 'ProductVersion\s*=\s*"([^"]+)"')
 if (-not $mEpVer.Success -or -not $mHostVer.Success) { throw '版本号校验失败：未能同时读出 EdgePanel.ps1 的 $script:panelVersion 与 Host.cs 的 ProductVersion' }
+# 文件属性里显示的 ProductVersion 来自 AssemblyInformationalVersion，也必须一起校验 ——
+# 否则 panelVersion 改了、右键属性还是旧号，用户看到两个版本号。
+$mInfoVer = [regex]::Match($text, 'AssemblyInformationalVersion\(\"([^\"]+)\"\)')
+if (-not $mInfoVer.Success -or $mInfoVer.Groups[1].Value -ne ('v' + $mEpVer.Groups[1].Value)) {
+    throw ('版本号校验失败：AssemblyInformationalVersion=' + $(if($mInfoVer.Success){$mInfoVer.Groups[1].Value}else{'（缺失）'}) + '，应为 v' + $mEpVer.Groups[1].Value)
+}
 if (('v' + $mEpVer.Groups[1].Value) -ne $mHostVer.Groups[1].Value) {
     throw ("版本号不一致：EdgePanel.ps1 为 v" + $mEpVer.Groups[1].Value + "，Host.cs 为 " + $mHostVer.Groups[1].Value + "，请先对齐后再编译")
 }
