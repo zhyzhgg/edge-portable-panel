@@ -2468,7 +2468,7 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $rb7z.CheckAlign = 'MiddleLeft'
     $rb7z.TextAlign = 'MiddleLeft'
     $rb7z.ForeColor = $clrText
-    $rb7z.Location = New-Object System.Drawing.Point((($pad + $lblW) + (S 1)), $fmtY)   # 原生圆点贴边起画、方块内缩 1px，右移 1px 让圆心与方块中心同轴
+    $rb7z.Location = New-Object System.Drawing.Point((($pad + $lblW) - (S 1)), $fmtY)   # 圆点/方块的内缩随 DPI 与主题变，实测 125% 下圆点比方块中心偏右约 1px，故左移补正
     $dlg.Controls.Add($rb7z)
 
     $rbZip = New-Object System.Windows.Forms.RadioButton
@@ -2478,7 +2478,7 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $rbZip.CheckAlign = 'MiddleLeft'
     $rbZip.TextAlign = 'MiddleLeft'
     $rbZip.ForeColor = $clrText
-    $rbZip.Location = New-Object System.Drawing.Point(($col2X + (S 1)), $fmtY)   # 同上：与下方方块中心对齐
+    $rbZip.Location = New-Object System.Drawing.Point(($col2X - (S 1)), $fmtY)   # 同上，与下方方块中心对齐
     $rbZip.Enabled = [bool]$script:packerSupportsZip
     if (-not $script:packerSupportsZip) { $dlgTip.SetToolTip($rbZip, '需在编译时放入 tools\7za.exe 才支持 zip 格式') }
     $dlg.Controls.Add($rbZip)
