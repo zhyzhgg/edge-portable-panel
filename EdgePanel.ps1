@@ -497,9 +497,9 @@ if ($script:isDark) {
     $clrBtnHover       = [System.Drawing.Color]::FromArgb(47, 55, 75)     # #2F374B 悬停底
     $clrBtnHoverEdge   = [System.Drawing.Color]::FromArgb(82, 95, 125)    # #525F7D 悬停边
     $clrBtnPress       = [System.Drawing.Color]::FromArgb(31, 37, 51)     # #1F2533 按下底
-    $clrBtnDisBg       = [System.Drawing.Color]::FromArgb(24, 28, 38)     # 禁用底
-    $clrBtnDisEdge     = [System.Drawing.Color]::FromArgb(38, 44, 59)     # 禁用边
-    $clrBtnDisText     = [System.Drawing.Color]::FromArgb(90, 100, 122)   # 禁用字
+    $clrBtnDisBg       = [System.Drawing.Color]::FromArgb(30, 35, 47)     # 禁用底（原 24,28,38 与弹窗底 20,23,31 几乎同色，视觉上像被盖住）
+    $clrBtnDisEdge     = [System.Drawing.Color]::FromArgb(48, 56, 74)     # 禁用边（原 38,44,59 太暗，细边看不见）
+    $clrBtnDisText     = [System.Drawing.Color]::FromArgb(110, 121, 145)  # 禁用字（原 90,100,122 过淡）
     $clrTrack          = [System.Drawing.Color]::FromArgb(38, 44, 59)     # 进度槽
     $clrTrackEdge      = [System.Drawing.Color]::FromArgb(58, 68, 92)     # 进度槽边
     $clrText           = [System.Drawing.Color]::FromArgb(241, 245, 249)  # #F1F5F9 主文字
@@ -1091,7 +1091,6 @@ if ($maxH -lt $wantH) {
 $script:logQueue = $null      # ConcurrentQueue，写入端可能是后台线程
 $script:logTimer = $null
 $script:logBlock = $null      # 非空时 Write-Log 先攒到块里，End-LogBlock 再整块入队
-$script:progressStop = $false   # 长任务（深度搜索）的中断标记
 $script:pickedRestoreDir = ''   # 恢复弹窗里手动选的目录（用于记忆上次选择）
 
 function Append-LogRow($row) {
@@ -1338,7 +1337,7 @@ try {
                 try { `$probe = Get-Content -LiteralPath `$probeFile -Raw | ConvertFrom-Json } catch { }
             }
             `$useCached = `$false
-            if (`$probe -and `$probe.lastFp -eq `$lastFp -and `$probe.time) {
+            if (`$probe -and `$probe.root -eq '$pkgRoot' -and `$probe.lastFp -eq `$lastFp -and `$probe.time) {
                 `$ageSec = ((Get-Date) - [datetime]::Parse(`$probe.time)).TotalSeconds
                 if (`$ageSec -lt 60) {
                     `$useCached = `$true
@@ -1363,7 +1362,7 @@ try {
                 `$bkSame = (`$curFp -eq `$lastFp)
                 try {
                     if (-not (Test-Path -LiteralPath `$cacheDir)) { New-Item -ItemType Directory -Path `$cacheDir -Force | Out-Null }
-                    [ordered]@{ time = (Get-Date).ToString('s'); lastFp = `$lastFp; tRoot = `$tRoot; tDef = `$tDef; topCnt = `$topCnt; same = `$bkSame } |
+                    [ordered]@{ root = '$pkgRoot'; time = (Get-Date).ToString('s'); lastFp = `$lastFp; tRoot = `$tRoot; tDef = `$tDef; topCnt = `$topCnt; same = `$bkSame } |
                         ConvertTo-Json -Compress | Set-Content -LiteralPath `$probeFile -Encoding UTF8
                 } catch { }
             }
@@ -1629,7 +1628,8 @@ function Update-Status {
 
 function Import-PolicyReg([string]$regFile, [string]$okLog = '策略导入完成') {
     # 唯一实现：经 UAC helper 导入策略键并解析结果（策略键对普通用户只读，必须提权）
-    $stamp = (Get-Date).ToString('HHmmssfff')
+    # 临时文件名不可预测（GUID 片段）：%TEMP% 里预置同名文件无法劫持提权 helper
+    $stamp = ([guid]::NewGuid().ToString('N')).Substring(0, 12)
     $helper = Join-Path $env:TEMP ('edgepanel-import-' + $stamp + '.ps1')
     $result = Join-Path $env:TEMP ('edgepanel-import-result-' + $stamp + '.txt')
     $helperCode = @'
@@ -1645,32 +1645,35 @@ try {
     [System.IO.File]::WriteAllLines($ResultFile, $lines, (New-Object System.Text.UTF8Encoding($true)))
 }
 '@
-    [System.IO.File]::WriteAllText($helper, $helperCode, (New-Object System.Text.UTF8Encoding($true)))
-    if (Test-Path -LiteralPath $result) { Remove-Item -LiteralPath $result -Force -ErrorAction SilentlyContinue }
-    Write-Log '正在请求管理员权限（UAC）以写入策略键…'
-    try {
-        $psi = @(
-            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $helper + '"'),
-            '-RegFile', ('"' + $regFile + '"'), '-ResultFile', ('"' + $result + '"')
-        )
-        Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
-            -ArgumentList $psi -Verb RunAs -WindowStyle Hidden -Wait | Out-Null
-    } catch {
-        Write-Log ('已取消（UAC 未确认）：' + $_.Exception.Message) 'warn'
-        Remove-Item -LiteralPath $helper, $regFile -Force -ErrorAction SilentlyContinue
-        return $false
-    }
     $ok = $false
-    if (-not (Test-Path -LiteralPath $result)) {
-        Write-Log '没有拿到导入结果，请检查 UAC 是否被拒绝' 'err'
-    } else {
-        foreach ($line in [System.IO.File]::ReadAllLines($result, [System.Text.Encoding]::UTF8)) {
-            if ($line -like 'RESULT: OK*') { Write-Log $okLog 'ok'; $ok = $true }
-            elseif ($line -like 'RESULT: FAIL*') { Write-Log ('策略导入失败：' + $line.Substring(13).Trim()) 'err' }
+    try {
+        [System.IO.File]::WriteAllText($helper, $helperCode, (New-Object System.Text.UTF8Encoding($true)))
+        if (Test-Path -LiteralPath $result) { Remove-Item -LiteralPath $result -Force -ErrorAction SilentlyContinue }
+        Write-Log '正在请求管理员权限（UAC）以写入策略键…'
+        try {
+            $psi = @(
+                '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $helper + '"'),
+                '-RegFile', ('"' + $regFile + '"'), '-ResultFile', ('"' + $result + '"')
+            )
+            Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
+                -ArgumentList $psi -Verb RunAs -WindowStyle Hidden -Wait | Out-Null
+        } catch {
+            Write-Log ('已取消（UAC 未确认）：' + $_.Exception.Message) 'warn'
+            return $false
         }
+        if (-not (Test-Path -LiteralPath $result)) {
+            Write-Log '没有拿到导入结果，请检查 UAC 是否被拒绝' 'err'
+        } else {
+            foreach ($line in [System.IO.File]::ReadAllLines($result, [System.Text.Encoding]::UTF8)) {
+                if ($line -like 'RESULT: OK*') { Write-Log $okLog 'ok'; $ok = $true }
+                elseif ($line -like 'RESULT: FAIL*') { Write-Log ('策略导入失败：' + $line.Substring(13).Trim()) 'err' }
+            }
+        }
+        return $ok
+    } finally {
+        # 成功 / 失败 / 中途抛异常，三个临时文件（helper、result、regFile）都必须清掉
+        Remove-Item -LiteralPath $helper, $result, $regFile -Force -ErrorAction SilentlyContinue
     }
-    Remove-Item -LiteralPath $helper, $result, $regFile -Force -ErrorAction SilentlyContinue
-    return $ok
 }
 
 function Apply-RecommendedPolicies {
@@ -2061,6 +2064,14 @@ function Get-DataFingerprint([string]$dataDir) {
     } catch { return $null }
 }
 function Get-FingerprintFile { return (Join-Path (Get-RuntimeCacheDir) 'last-backup-fingerprint.json') }
+function Clear-FpProbe {
+    # 指纹快检缓存（60 秒 / 300 秒两级）只对「同一个包根 + 同一份数据」成立。
+    # 切目录或恢复后必须删掉，否则会拿上一个目录的结论冒充当前目录的「数据一致」。
+    try {
+        $pf = Join-Path (Get-RuntimeCacheDir) 'last-fp-probe.json'
+        if (Test-Path -LiteralPath $pf) { Remove-Item -LiteralPath $pf -Force -ErrorAction SilentlyContinue }
+    } catch { }
+}
 function Get-LastBackupStamp {
     # 上次成功备份记录：{ fp, time, name }
     $f = Get-FingerprintFile
@@ -2470,6 +2481,9 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $rb7z.ForeColor = $clrText
     $rb7z.Location = New-Object System.Drawing.Point((($pad + $lblW) - (S 1)), $fmtY)   # 圆点/方块的内缩随 DPI 与主题变，实测 125% 下圆点比方块中心偏右约 1px，故左移补正
     $dlg.Controls.Add($rb7z)
+    # 它左缘压着「压缩格式」标签的最后 1px，而 Controls.Add 是追加到末尾（z 序在下），
+    # 圆环最左那一列会被标签盖掉 —— 表现为「圆圈左边显示不全」。提到最上层即可，坐标不动。
+    $rb7z.BringToFront()
 
     $rbZip = New-Object System.Windows.Forms.RadioButton
     $rbZip.Text = 'zip（Win10 直接解压）'
@@ -2550,6 +2564,15 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $dlgTip.SetToolTip($chkPanel, $tipPanelTxt)
     $dlgTip.SetToolTip($chkFull, $tipFullTxt)
 
+    # 原生勾选控件在深色下按系统「浅色主题」画 glyph（实测：未勾复选框是 243,243,243 纯白块、
+    # 单选环是 0,95,184 的暗蓝，压在 #14171F 弹窗底上几乎看不见，看着像被盖住）。
+    # 不重绘，只让 Windows 用深色主题画它 —— 与日志框 / 目录列表滚动条同一个入口。
+    $chk.Add_HandleCreated({ [ThemeHelper]::ApplyDarkScroll($chk.Handle, $script:isDark) })
+    $rb7z.Add_HandleCreated({ [ThemeHelper]::ApplyDarkScroll($rb7z.Handle, $script:isDark) })
+    $rbZip.Add_HandleCreated({ [ThemeHelper]::ApplyDarkScroll($rbZip.Handle, $script:isDark) })
+    $chkPanel.Add_HandleCreated({ [ThemeHelper]::ApplyDarkScroll($chkPanel.Handle, $script:isDark) })
+    $chkFull.Add_HandleCreated({ [ThemeHelper]::ApplyDarkScroll($chkFull.Handle, $script:isDark) })
+
     # ── 统一底部操作栏（恢复入口已挪到主界面「缓存与备份」组）──
     [void](Add-DialogFooter $dlg $w ($rowY + (S 26)) '开始备份' 'primary')
     $res = $dlg.ShowDialog($form)
@@ -2600,8 +2623,7 @@ function Show-PwDialog([string]$title, [string]$note, [bool]$confirm) {
     if ([string]::IsNullOrWhiteSpace($v1)) { return $null }
     return $v1
 }
-
-function Show-ProgressWindow([string]$title, [switch]$Stoppable, [switch]$TopMost) {
+function Show-ProgressWindow([string]$title, [switch]$TopMost) {
     # 通用进度窗：上行左阶段右百分比耗时 + 中间 8px 锐利直条 + 下行单行省略文件名（留白充裕，适配双主题）
     $w = S 460
     $pad = S 16
@@ -2658,27 +2680,14 @@ function Show-ProgressWindow([string]$title, [switch]$Stoppable, [switch]$TopMos
     $lbFile.Text = ''
     $dlg.Controls.Add($lbFile)
 
-    $stopBtn = $null
     $fileBottom = $pad + (S 48) + (S 20)
     $baseH = $fileBottom + $pad
-    if ($Stoppable) {
-        # 可中断任务（如深度搜索）：走标准 New-DialogBtn，右缘对齐进度条；事件中通过 $s 操作自身避免局部变量失效
-        $script:progressStop = $false
-        $stopY = $fileBottom + (S 10)
-        $stopBtn = New-DialogBtn $dlg ($w - $pad - (S 76)) $stopY (S 76) (S 26) '停止' 'secondary'
-        $stopBtn.Add_Click({
-            param($s, $e)
-            $script:progressStop = $true
-            if ($s) { $s.Enabled = $false; $s.Text = '停止中…' }
-        })
-        $baseH = $stopY + (S 26) + $pad
-    }
     $dlg.ClientSize = New-Object System.Drawing.Size($w, $baseH)
     if ($TopMost) { $dlg.TopMost = $true }
     Show-DialogCentered $dlg
     $dlg.Show()
     [System.Windows.Forms.Application]::DoEvents()
-    return @{ Form = $dlg; Status = $lbStatus; Meta = $lbMeta; File = $lbFile; Bar = $bar; StopBtn = $stopBtn; Start = (Get-Date) }
+    return @{ Form = $dlg; Status = $lbStatus; Meta = $lbMeta; File = $lbFile; Bar = $bar; Start = (Get-Date) }
 }
 function Get-PanelExePath {
     # 当前正在运行的面板 EXE：宿主用 EP_EXEPATH 传真实路径（用户可能把它改名成 EdgePanel.exe / Edge面板.exe）
@@ -2963,6 +2972,13 @@ function Invoke-CleanAndBackup([bool]$plaintext = $false, [switch]$Force, [switc
                 $lastPump = $nowTick
                 [System.Windows.Forms.Application]::DoEvents()
             }
+            # 关窗即停：别让 7za 变成孤儿继续写 .tmp（FormClosing 也会 Kill，这里是双保险）
+            if ($script:closeRequested) {
+                try { if (-not $proc.HasExited) { $proc.Kill(); [void]$proc.WaitForExit(1000) } } catch { }
+                Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+                Write-Log '已取消打包（关窗）' 'warn'
+                return $false
+            }
         }
         $tail = $proc.StandardOutput.ReadToEnd()
         $errRaw = $errTask.Result
@@ -3220,98 +3236,8 @@ function Show-PkgPickerDialog([string[]]$foundDirs, [string]$curExeDir, [string]
 
     $script:pickedBrowseDir = ''
     $ft = Add-DialogFooter $dlg $w ($lbY + $listH) '确定' 'primary'
-    $wDeep = [int][math]::Max((S 98), ([System.Windows.Forms.TextRenderer]::MeasureText('深度搜索…', $fontBase).Width + (S 24)))
     $wBrowse = [int][math]::Max((S 98), ([System.Windows.Forms.TextRenderer]::MeasureText('浏览目录…', $fontBase).Width + (S 24)))
-    $btnDeep = New-DialogBtn $ft.Footer $pad (S 13) $wDeep (S 30) '深度搜索…' 'secondary'
-    $btnDeep.Add_Click({
-        if (-not $btnDeep.Enabled) { return }
-        $btnDeep.Enabled = $false
-        # 深搜必须在后台 Runspace 里跑：UI 线程同步枚举全盘会堵死消息泵，连带 explorer / DWM 的跨进程消息一起死等
-        $state = [hashtable]::Synchronized(@{ Stop = $false; Current = ''; Visited = 0; Found = 0; Done = $false; Error = ''; Result = @() })
-        $prog = $null; $deepRs = $null; $deepPs = $null; $deepTimer = $null; $deepSw = $null
-        $finishDeep = {
-            try { if ($deepTimer) { $deepTimer.Stop(); $deepTimer.Dispose() } } catch { }
-            if ($prog) { try { $prog.Close() } catch { } }
-            try { if ($deepPs) { $deepPs.Dispose() } } catch { }
-            try { if ($deepRs) { $deepRs.Close(); $deepRs.Dispose() } } catch { }
-            $prog = $null; $deepTimer = $null; $deepPs = $null; $deepRs = $null
-            if (-not $btnDeep.IsDisposed) { $btnDeep.Enabled = $true }
-        }
-        $renderDeep = {
-            $list.Items.Clear(); $choices.Clear(); $newDef = 0
-            foreach ($d in @($state.Result)) {
-                $vd = Resolve-VersionDir (Join-Path $d 'Edge') 'msedge.exe'
-                $vt = if ($vd) { Split-Path -Leaf $vd } else { '已就绪' }
-                $mk = if ($lastSaved -and $d.Equals($lastSaved, [System.StringComparison]::OrdinalIgnoreCase)) { '（上次）' } else { '' }
-                $ix = $choices.Add([pscustomobject]@{ Kind = 'existing'; Path = $d })
-                [void]$list.Items.Add(('{0} ｜ {1}{2}' -f $d, $vt, $mk))
-                if ($mk) { $newDef = $ix }
-            }
-            if ($allowDeployHere -and $curExeDir -and (-not (@($state.Result) -contains $curExeDir.TrimEnd('\')))) {
-                [void]$choices.Add([pscustomobject]@{ Kind = 'deploy'; Path = $curExeDir })
-                [void]$list.Items.Add(('在当前目录全新部署 ｜ ' + $curExeDir))
-            }
-            if ($list.Items.Count -gt 0) { $list.SelectedIndex = $newDef }
-        }
-        try {
-            $prog = Show-ProgressWindow '正在深度搜索便携 Edge' -Stoppable
-            if ($prog) {
-                $prog.Bar.Indeterminate = $true
-                $prog.Status.Text = '正在深度搜索便携 Edge（最多 4 层）…'
-                if ($prog.Meta) { $prog.Meta.Text = '准备中…' }
-                # 停止：只置标志并立刻关窗；后台每轮都会看到 Stop，不会再卡在「停止中…」
-                $prog.StopBtn.Add_Click({
-                    $state.Stop = $true
-                    try { if ($deepTimer) { $deepTimer.Stop() } } catch { }
-                    Write-Log ('深度搜索已停止（已扫 ' + [int]$state.Visited + ' 个目录）') 'warn'
-                    if ($prog) { try { $prog.Close() } catch { } }
-                    if (-not $btnDeep.IsDisposed) { $btnDeep.Enabled = $true }
-                })
-            }
-            $deepRs = [runspacefactory]::CreateRunspace()
-            $deepRs.ThreadOptions = 'ReuseThread'
-            $deepRs.Open()
-            $deepPs = [powershell]::Create()
-            $deepPs.Runspace = $deepRs
-            [void]$deepPs.AddScript({
-                param($st, $depth, $appDir)
-                try {
-                    . (Join-Path $appDir '_Common.ps1')
-                    $res = @(Find-PortableEdgeDirsDeep $depth {
-                        param($p, $v, $f)
-                        $st.Current = $p; $st.Visited = $v; $st.Found = $f
-                        return $true
-                    } { $st.Stop })
-                    $st.Result = $res
-                } catch { $st.Error = $_.Exception.Message }
-                finally { $st.Done = $true }
-            }).AddArgument($state).AddArgument(4).AddArgument($scriptsDir)
-            [void]$deepPs.BeginInvoke()
-            $deepSw = [Diagnostics.Stopwatch]::StartNew()
-            $deepTimer = New-Object System.Windows.Forms.Timer
-            $deepTimer.Interval = 100
-            $deepTimer.Add_Tick({
-                if ($prog) {
-                    if ($state.Current) { $prog.File.Text = Format-MiddleEllipsisPath $state.Current $fontSmall ($prog.File.Width - (S 4)) }
-                    try { $prog.Form.BringToFront() } catch { }   # 进度窗不设 TopMost（避免压住任务管理器），靠每拍置前压住模态选择窗
-                    if ($prog.Meta) { $prog.Meta.Text = ('{0} 目录 · {1} 份 · {2}s' -f [int]$state.Visited, [int]$state.Found, [int]$deepSw.Elapsed.TotalSeconds) }
-                }
-                if ($state.Done) {
-                    $deepTimer.Stop()
-                    if ($state.Error) { Write-Log ('深度搜索失败：' + $state.Error) 'err' }
-                    & $renderDeep
-                    if ($state.Stop) { Write-Log ('深度搜索已停止（已扫 ' + [int]$state.Visited + ' 个目录）') 'warn' }
-                    else { Write-Log ('深度搜索完成：发现 ' + @($state.Result).Count + ' 份便携 Edge') 'ok' }
-                    & $finishDeep
-                }
-            })
-            $deepTimer.Start()
-        } catch {
-            Write-Log ('深搜启动失败：' + $_.Exception.Message) 'err'
-            & $finishDeep
-        }
-    })
-    $btnBrowse = New-DialogBtn $ft.Footer ($pad + $wDeep + (S 8)) (S 13) $wBrowse (S 30) '浏览目录…' 'secondary'
+    $btnBrowse = New-DialogBtn $ft.Footer $pad (S 13) $wBrowse (S 30) '浏览目录…' 'secondary'
     $btnBrowse.Add_Click({
         $gotB = Select-FolderDialog '选择便携 Edge 根目录（包含 Edge\msedge.exe）' '' $dlg.Handle
         if ($gotB) {
@@ -3375,6 +3301,7 @@ function Switch-PackageRoot([string]$newRoot, [switch]$CheckRunning) {
     $script:policyKey = 'HKCU:\SOFTWARE\Policies\Microsoft\Edge_' + $pkName
     $script:policyKeyPlain = $script:policyKey -replace '^HKCU:', 'HKEY_CURRENT_USER'
     $script:statusScript = Build-StatusScript
+    Clear-FpProbe   # 换目录后旧 probe 缓存必须失效
     if ($script:btnSwitchPkg) {
         Update-PathLabel
     }
@@ -3628,6 +3555,9 @@ function Invoke-RestoreBackup([switch]$Auto) {
             if ($prog) { $prog.Status.Text = '正在瘦身…'; [System.Windows.Forms.Application]::DoEvents() }
             $rs = Invoke-Ps $edgeTune @('-Action', 'SlimAll', '-Quiet', '-Root', $pkgRoot)
             foreach ($line in $rs.Output) { $s2 = [string]$line; if (-not [string]::IsNullOrWhiteSpace($s2)) { Write-Log ($s2 -replace '^\s+', '') } }
+            # 与「更新并瘦身」同一口径：完整包恢复会把 renderer 与组件带回来，瘦身没跑成必须让用户看见
+            if ($rs.Code -eq 0) { Write-Log '恢复后瘦身完成' 'ok' }
+            else { Write-Log ('恢复后瘦身返回码 ' + $rs.Code + '：请稍后手动点「一键瘦身」') 'warn' }
         }
     } catch {
         # 失败回滚：把旧数据/旧本体改回来，清掉临时目录
@@ -3649,6 +3579,7 @@ function Invoke-RestoreBackup([switch]$Auto) {
 
     if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
     Write-Log ('恢复完成（总用时 ' + [math]::Round($swRestore.Elapsed.TotalSeconds, 1) + ' 秒）。') 'ok'
+    Clear-FpProbe   # 数据已被换回旧版，旧 probe 缓存必须失效
     if ($movedData) { Write-Log ('旧数据保留在 ' + (Split-Path $oldData -Leaf) + '：确认新数据一切正常后再手动删除它') 'warn' }
     if ($movedEdge) { Write-Log ('旧程序保留在 ' + (Split-Path $oldEdge -Leaf) + '：确认能正常启动后再手动删除它') 'warn' }
 
@@ -4516,28 +4447,44 @@ try {
     }
 } catch { }
 
+function Get-RedirectLocation([string]$url, [int]$msLimit = 2500) {
+    # 只取 302 的 Location：不跟跳转、可中断、DoEvents 保活 UI（原实现是同步 GetResponse，最坏 3×8s 冻界面）
+    try {
+        $req = [System.Net.HttpWebRequest]::Create($url)
+        $req.UserAgent = 'EdgePanel/' + $script:panelVersion
+        $req.AllowAutoRedirect = $false
+        $req.Timeout = $msLimit
+        $req.ReadWriteTimeout = $msLimit
+        $ar = $req.BeginGetResponse($null, $null)
+        $wh = $ar.AsyncWaitHandle
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        try {
+            while (-not $ar.IsCompleted) {
+                if ($script:closeRequested -or $sw.ElapsedMilliseconds -ge $msLimit) { try { $req.Abort() } catch { }; return '' }
+                [void]$wh.WaitOne(120)
+                [System.Windows.Forms.Application]::DoEvents()
+            }
+            $resp = $null
+            try { $resp = $req.EndGetResponse($ar) } catch { $resp = $_.Exception.Response }
+            if (-not $resp) { return '' }
+            $loc = [string]$resp.Headers['Location']
+            try { $resp.Close() } catch { }
+            return $loc
+        } finally { try { $wh.Close() } catch { } }
+    } catch { return '' }
+}
 function Get-PanelLatestTagRedirect {
     # 用 releases/latest 的 302 重定向拿最新 tag：**不消耗 GitHub API 配额**（匿名 API 只有 60 次/小时，
     # 频繁检查会被 403 限流）。返回原始 tag（如 'v1.3.4'）；失败返回 ''。
+    # 与手动更新/启动探测同口径：仅 2 源（已淘汰 ghfast.top），单源 2.5s，UI 全程可响应。
     if ([string]::IsNullOrWhiteSpace($script:panelUpdateRepo)) { return '' }
     $repoSlug = $script:panelUpdateRepo.Trim('/')
     $page = 'https://github.com/' + $repoSlug + '/releases/latest'
-    foreach ($u in @($page, ('https://gh-proxy.org/' + $page), ('https://ghfast.top/' + $page))) {
-        try {
-            $req = [System.Net.HttpWebRequest]::Create($u)
-            $req.UserAgent = 'EdgePanel/' + $script:panelVersion
-            $req.AllowAutoRedirect = $false
-            $req.Timeout = 8000
-            $req.ReadWriteTimeout = 8000
-            $resp = $null
-            try { $resp = $req.GetResponse() } catch { $resp = $_.Exception.Response }
-            if (-not $resp) { continue }
-            $loc = [string]$resp.Headers['Location']
-            try { $resp.Close() } catch { }
-            if (-not $loc) { continue }
-            $m = [regex]::Match($loc, '/tag/(v?[0-9][0-9A-Za-z\.\-_]*)$')
-            if ($m.Success) { return [string]$m.Groups[1].Value }   # 保留原始 tag（含 v），拼下载地址要用原名
-        } catch { }
+    foreach ($u in @($page, ('https://gh-proxy.org/' + $page))) {
+        $loc = Get-RedirectLocation $u 2500
+        if (-not $loc) { continue }
+        $m = [regex]::Match($loc, '/tag/(v?[0-9][0-9A-Za-z\.\-_]*)$')
+        if ($m.Success) { return [string]$m.Groups[1].Value }   # 保留原始 tag（含 v），拼下载地址要用原名
     }
     return ''
 }
@@ -4714,6 +4661,29 @@ return ('ERR|')
     $script:panelProbeTimer.Start()
 }
 
+function Get-TextQuick([string]$url, [int]$msLimit = 2500) {
+    # 单源可中断 GET：BeginGetResponse + 120ms 轮询 + DoEvents，UI 不冻；超时或关窗立即 Abort 并返回空串
+    try {
+        $req = [System.Net.HttpWebRequest]::Create($url)
+        $req.UserAgent = 'EdgePanel/' + $script:panelVersion
+        $req.Timeout = $msLimit
+        $req.ReadWriteTimeout = $msLimit
+        $ar = $req.BeginGetResponse($null, $null)
+        $wh = $ar.AsyncWaitHandle
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        try {
+            while (-not $ar.IsCompleted) {
+                if ($script:closeRequested -or $sw.ElapsedMilliseconds -ge $msLimit) { try { $req.Abort() } catch { }; return '' }
+                [void]$wh.WaitOne(120)
+                [System.Windows.Forms.Application]::DoEvents()
+            }
+            $resp = $req.EndGetResponse($ar)
+            if (-not $resp) { return '' }
+            $sr = New-Object System.IO.StreamReader($resp.GetResponseStream(), [System.Text.Encoding]::UTF8)
+            try { return $sr.ReadToEnd() } finally { $sr.Dispose(); $resp.Close() }
+        } finally { try { $wh.Close() } catch { } }
+    } catch { return '' }
+}
 function Invoke-PanelUpdate([switch]$SkipConfirm) {
     if ([string]::IsNullOrWhiteSpace($script:panelUpdateRepo)) {
         Write-Log '面板更新源尚未配置：GitHub 仓库上线后，在 EdgePanel.ps1 顶部填入 $script:panelUpdateRepo = ''用户名/仓库名'' 即可启用镜像检查与更新。' 'warn'
@@ -4727,17 +4697,12 @@ function Invoke-PanelUpdate([switch]$SkipConfirm) {
         Write-Log ('正在检查面板更新：' + $script:panelUpdateRepo + ' …')
         $rel = $null
         $apiErr = ''
-        foreach ($apiUrl in @($rawApi, ('https://gh-proxy.org/' + $rawApi), ('https://ghfast.top/' + $rawApi))) {
-            try {
-                $req = [System.Net.HttpWebRequest]::Create($apiUrl)
-                $req.UserAgent = 'EdgePanel/' + $script:panelVersion
-                $req.Timeout = 8000
-                $resp = $req.GetResponse()
-                $sr = New-Object System.IO.StreamReader($resp.GetResponseStream(), [System.Text.Encoding]::UTF8)
-                $rel = $sr.ReadToEnd() | ConvertFrom-Json
-                $sr.Dispose(); $resp.Close()
-                if ($rel -and $rel.tag_name) { break }
-            } catch { $apiErr = $_.Exception.Message }
+        # 与启动探测同口径：仅 2 源（直连 + gh-proxy.org，已淘汰 ghfast.top），单源 2.5s，UI 全程可响应
+        foreach ($apiUrl in @($rawApi, ('https://gh-proxy.org/' + $rawApi))) {
+            $apiText = Get-TextQuick $apiUrl 2500
+            if (-not $apiText) { $apiErr = '超时或连接失败'; continue }
+            try { $rel = $apiText | ConvertFrom-Json } catch { $rel = $null; $apiErr = '返回内容不是合法 JSON' }
+            if ($rel -and $rel.tag_name) { break }
         }
         $rawTag = ''
         $tagVerText = ''
@@ -4786,7 +4751,6 @@ function Invoke-PanelUpdate([switch]$SkipConfirm) {
         $dlUrl = $panelLatestInfo.ExeUrl
         $mirrors = @(
             ('https://gh-proxy.org/' + $dlUrl),
-            ('https://ghfast.top/' + $dlUrl),
             ('https://gh-proxy.com/' + $dlUrl),
             ('https://ghproxy.net/' + $dlUrl),
             ('https://gh.llkk.cc/' + $dlUrl),
@@ -4822,14 +4786,10 @@ function Invoke-PanelUpdate([switch]$SkipConfirm) {
         }
         if (-not $expectSha -and $panelLatestInfo.ShaUrl) {
             $shaText = ''
-            foreach ($su in @(('https://gh-proxy.org/' + $panelLatestInfo.ShaUrl), ('https://ghfast.top/' + $panelLatestInfo.ShaUrl), $panelLatestInfo.ShaUrl)) {
-                try {
-                    $wc = New-Object System.Net.WebClient
-                    $wc.Headers.Add('User-Agent', 'EdgePanel/' + $script:panelVersion)
-                    $shaText = $wc.DownloadString($su)
-                    $wc.Dispose()
-                    if ($shaText) { break }
-                } catch { }
+            # 原实现用 WebClient.DownloadString（无超时，UI 线程阻塞），改为同款可中断 GET + 2 源
+            foreach ($su in @(('https://gh-proxy.org/' + $panelLatestInfo.ShaUrl), $panelLatestInfo.ShaUrl)) {
+                $shaText = Get-TextQuick $su 2500
+                if ($shaText) { break }
             }
             $mSha = [regex]::Match($shaText, '(?i)\b([0-9a-f]{64})\b')
             if ($mSha.Success) { $expectSha = $mSha.Groups[1].Value.ToLowerInvariant() }
@@ -4988,6 +4948,12 @@ $form.Add_Shown({
         Get-ChildItem $env:TEMP -Directory -Filter 'edge-update-*' -ErrorAction SilentlyContinue |
             Where-Object { $_.LastWriteTime -lt (Get-Date).AddMinutes(-30) } |
             ForEach-Object { Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+        # 打包 / 恢复被强杀会在包根留下这两类残留，同样超过 30 分钟的清掉（只认这两个前缀，不碰用户数据）
+        foreach ($pat in @('Edge_Portable.tmp.*', '_restore_tmp_*')) {
+            Get-ChildItem -LiteralPath $pkgRoot -Filter $pat -Force -ErrorAction SilentlyContinue |
+                Where-Object { $_.LastWriteTime -lt (Get-Date).AddMinutes(-30) } |
+                ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+        }
         # 只有在手动指定了缩放（EP_UI_SCALE / EP_UI_BASE）时才打这行；默认恒等缩放不打扰日志
 if ($env:EP_UI_SCALE -or $env:EP_UI_BASE) {
     Write-Log ('界面缩放（手动）：' + $script:dpiScale + '× → 窗口 ' + $form.ClientSize.Width + '×' + $form.ClientSize.Height + ' px')

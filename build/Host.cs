@@ -11,7 +11,7 @@ using System.Text.RegularExpressions;
 [assembly: AssemblyProduct("便携 Edge 面板")]
 [assembly: AssemblyCompany("EdgePanel")]
 [assembly: AssemblyVersion("1.3.6.0")]
-[assembly: AssemblyFileVersion("1.3.6.280")]
+[assembly: AssemblyFileVersion("1.3.6.289")]
 [assembly: AssemblyInformationalVersion("v1.3.6")]
 
 // 便携 Edge 面板 —— 单文件 EXE 宿主
@@ -21,7 +21,7 @@ using System.Text.RegularExpressions;
 internal static class Host
 {
     // 资源版本号：内容变了就改这里，触发重新解包
-    private const string ResourceVersion = "2026-11-21.280";   // 解包目录键（每次改内容 -Bump）
+    private const string ResourceVersion = "2026-11-21.289";   // 解包目录键（每次改内容 -Bump）
     private const string ProductVersion = "v1.3.6";   // 必须与 EdgePanel.ps1 的 $script:panelVersion 一致（build.ps1 自动校验）
     private const string FallbackFolderName = "EdgePanel";
 

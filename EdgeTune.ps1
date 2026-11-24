@@ -83,6 +83,9 @@ $fileTargets = @(
     'eventlog_provider.dll'
     'Copilot.dat'
     'show_third_party_software_licenses.bat'
+    # 158 起微软把渲染器拆成独立模块（~232 MB）；Edge-Lite 也裁它，本机 2026-11-20 手删后长期无异常。
+    # 它不在 essentialRequired / essentialFeature 里，删掉不会触发缺件告警。
+    'msedge_renderer.dll'
 )
 
 $globTargets = @(
@@ -243,6 +246,31 @@ function Get-SlimTargets([string]$prog) {
     return @($kept | Sort-Object FullName -Unique)
 }
 
+function Set-IniFlags([string]$ini, [string[]]$flags) {
+    <#  把一组"静态开关"并进 command_line：已存在的跳过，缺的追加；幂等，可重复执行。
+        与 Set-ComponentUpdate / Set-IniFeature 分开：那两个是可开关的功能，这里是一次性固化项。 #>
+    $s = Read-IniState $ini
+    if ($s.Index -lt 0) { Say '[错误] ini 里没有 command_line 行，未改动。' 'Red'; return $false }
+    $tokens = @($s.Value -split '\s+' | Where-Object { $_ -ne '' })
+    $missing = @($flags | Where-Object { $tokens -notcontains $_ })
+    if ($missing.Count -eq 0) { Say '静态开关已齐全，无需修改。' 'Green'; return $true }
+
+    $newVal = ((($tokens + $missing) -join ' ') + $s.Trail)
+    if (-not (Test-Path -LiteralPath $backupDir)) { New-Item -ItemType Directory -Path $backupDir -Force | Out-Null }
+    $bak = Join-Path $backupDir ('ini.' + (Get-Date).ToString('yyyyMMdd-HHmmss') + '.bak')
+    Copy-Item -LiteralPath $ini -Destination $bak -Force
+    [void](Remove-OldBackups $backupDir 10)
+
+    $s.Lines[$s.Index] = 'command_line=' + $newVal
+    $out = ($s.Lines -join $s.Nl)
+    if (-not $out.EndsWith($s.Nl)) { $out += $s.Nl }
+    [System.IO.File]::WriteAllText($ini, $out, $s.Enc)
+
+    Say ('已并入静态开关：' + ($missing -join ' ')) 'Green'
+    Say ('  command_line = ' + $newVal.Trim())
+    Say ('  备份: ' + $bak) 'DarkGray'
+    return $true
+}
 function Show-Status([string]$pkgRoot, [string]$prog, [string]$ini) {
     $files = @(Get-ChildItem $prog -Recurse -File -Force -ErrorAction SilentlyContinue)
     $mb = if ($files.Count) { [math]::Round((($files | Measure-Object Length -Sum).Sum / 1MB), 1) } else { 0 }
@@ -376,6 +404,8 @@ function Do-SlimAll([string]$pkgRoot, [string]$programDir, [string]$iniPath) {
         # 多线程下载：Chromium 的 ParallelDownloading 只能走 --enable-features（没有对应注册表策略，
         # 且 SmartScreen 那类"下载检查"策略在个人电脑上无效），这里顺手并入同一个 --enable-features 列表。
         [void](Set-IniFeature $iniPath 'ParallelDownloading' $true)
+        # 静态开关：跳过首次运行引导、关崩溃上报（dmp 从源头不产生，与清理清单里的 Crashpad 事后清互补）
+        [void](Set-IniFlags $iniPath @('--no-first-run', '--disable-breakpad'))
     } else { Say '找不到 ini，跳过组件更新开关。' 'Yellow' }
     return $true
 }
