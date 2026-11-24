@@ -687,9 +687,9 @@ $lblSub.AutoSize = $false
 $lblSub.AutoEllipsis = $true
 $lblSub.UseMnemonic = $false
 $lblSub.TextAlign = 'MiddleLeft'
-$lblSub.Location = New-Object System.Drawing.Point((S 18), (S 41))
+$lblSub.Location = New-Object System.Drawing.Point((S 19), (S 41))
 $lblSub.Text = Format-MiddleEllipsisPath $pkgRoot $fontSub ($subMaxW - (S 2))
-$lblSubW = [int][Math]::Min(([System.Windows.Forms.TextRenderer]::MeasureText($lblSub.Text, $fontSub, (New-Object System.Drawing.Size(9999, 9999)), $script:noPadMeasure).Width + (S 2)), $subMaxW)
+    $lblSubW = [int][Math]::Min($lblSub.PreferredWidth, $subMaxW)   # 用控件自身渲染上下文量宽，避免 MeasureText 按系统 DPI 放大虚宽
 $lblSub.Size = New-Object System.Drawing.Size($lblSubW, (S 20))
 $lblSub.Cursor = 'Hand'
 $lblSub.Add_Click({
@@ -3188,7 +3188,7 @@ function Update-PathLabel {
     if (-not $lblSub) { return }
     $t = Format-MiddleEllipsisPath $pkgRoot $fontSub ($subMaxW - (S 2))
     $lblSub.Text = $t
-    $w = [System.Windows.Forms.TextRenderer]::MeasureText($t, $fontSub, (New-Object System.Drawing.Size(9999, 9999)), $script:noPadMeasure).Width + (S 2)
+    $w = [int][Math]::Min($lblSub.PreferredWidth, $subMaxW)   # 同上：改用 PreferredWidth，不再被 125% DPI 放大
     if ($w -gt $subMaxW) { $w = $subMaxW }
     $lblSub.Size = New-Object System.Drawing.Size([int]$w, (S 20))
     if ($script:lblSubSep) {
