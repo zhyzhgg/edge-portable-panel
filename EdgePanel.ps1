@@ -677,8 +677,8 @@ function Enable-DoubleBuffer($c) {
 }
 # 顶栏第二行：路径（左键打开目录）+ 「· 切换目录」（X=20 对齐上方大标题左墨迹，NoPadding 紧贴收口，长路径中段省略+悬停全显）
 $script:noPadMeasure = [System.Windows.Forms.TextFormatFlags]::NoPadding -bor [System.Windows.Forms.TextFormatFlags]::NoPrefix
-$swLinkW = [int][math]::Max((S 56), ([System.Windows.Forms.TextRenderer]::MeasureText('切换目录', $fontSmall, (New-Object System.Drawing.Size(9999, 9999)), $script:noPadMeasure).Width + (S 6)))
-$swSepW = S 12
+$swLinkW = [int][math]::Max((S 56), ([System.Windows.Forms.TextRenderer]::MeasureText('切换目录', $fontSmall, (New-Object System.Drawing.Size(9999, 9999)), $script:noPadMeasure).Width + (S 2)))
+$swSepW = S 8
 $subMaxW = (S 404) - $swSepW - $swLinkW - (S 4)
 $lblSub = New-Object System.Windows.Forms.Label
 $lblSub.Font = $fontSub
@@ -687,9 +687,9 @@ $lblSub.AutoSize = $false
 $lblSub.AutoEllipsis = $true
 $lblSub.UseMnemonic = $false
 $lblSub.TextAlign = 'MiddleLeft'
-$lblSub.Location = New-Object System.Drawing.Point((S 20), (S 41))
+$lblSub.Location = New-Object System.Drawing.Point((S 18), (S 41))
 $lblSub.Text = Format-MiddleEllipsisPath $pkgRoot $fontSub ($subMaxW - (S 2))
-$lblSubW = [int][Math]::Min(([System.Windows.Forms.TextRenderer]::MeasureText($lblSub.Text, $fontSub, (New-Object System.Drawing.Size(9999, 9999)), $script:noPadMeasure).Width + (S 6)), $subMaxW)
+$lblSubW = [int][Math]::Min(([System.Windows.Forms.TextRenderer]::MeasureText($lblSub.Text, $fontSub, (New-Object System.Drawing.Size(9999, 9999)), $script:noPadMeasure).Width + (S 2)), $subMaxW)
 $lblSub.Size = New-Object System.Drawing.Size($lblSubW, (S 20))
 $lblSub.Cursor = 'Hand'
 $lblSub.Add_Click({
@@ -3134,8 +3134,8 @@ function Show-PkgPickerDialog([string[]]$foundDirs, [string]$curExeDir, [string]
                 }
                 [System.Windows.Forms.Application]::DoEvents()
                 return $true
-            })
-            if ($script:progressStop -and $prog) { Write-Log ('深度搜索已停止（已扫 ' + $script:deepLastVis + ' 个目录）') 'warn' }
+            } { $script:progressStop })
+            if ($script:deepStopped -and $prog) { Write-Log ('深度搜索已停止（已扫 ' + $script:deepLastVis + ' 个目录）') 'warn' }
             $list.Items.Clear()
             $choices.Clear()
             $newDef = 0
@@ -3188,7 +3188,7 @@ function Update-PathLabel {
     if (-not $lblSub) { return }
     $t = Format-MiddleEllipsisPath $pkgRoot $fontSub ($subMaxW - (S 2))
     $lblSub.Text = $t
-    $w = [System.Windows.Forms.TextRenderer]::MeasureText($t, $fontSub, (New-Object System.Drawing.Size(9999, 9999)), $script:noPadMeasure).Width + (S 6)
+    $w = [System.Windows.Forms.TextRenderer]::MeasureText($t, $fontSub, (New-Object System.Drawing.Size(9999, 9999)), $script:noPadMeasure).Width + (S 2)
     if ($w -gt $subMaxW) { $w = $subMaxW }
     $lblSub.Size = New-Object System.Drawing.Size([int]$w, (S 20))
     if ($script:lblSubSep) {

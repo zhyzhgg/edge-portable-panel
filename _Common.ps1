@@ -167,7 +167,7 @@ function Find-PortableEdgeDirs([string]$lastSaved = '') {
     }
     return @($found)
 }
-function Find-PortableEdgeDirsDeep([int]$maxDepth = 4, [scriptblock]$onProgress = $null) {
+function Find-PortableEdgeDirsDeep([int]$maxDepth = 4, [scriptblock]$onProgress = $null, [scriptblock]$stopTest = $null) {
     <#  全机固定盘符深度搜索便携 Edge（最多 4 层，纯 .NET 枚举 + 噪声目录剪枝 + 100ms 节流回调）。 #>
     $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
     $found = New-Object System.Collections.ArrayList
@@ -187,6 +187,7 @@ function Find-PortableEdgeDirsDeep([int]$maxDepth = 4, [scriptblock]$onProgress 
         $q.Enqueue([pscustomobject]@{ Path = $drv.RootDirectory.FullName.TrimEnd('\'); Depth = 0 })
     }
     $visited = 0
+    $script:deepStopped = $false
     $uiSw = [System.Diagnostics.Stopwatch]::StartNew()
     $lastUiMs = -1000
     while ($q.Count -gt 0) {
@@ -194,6 +195,8 @@ function Find-PortableEdgeDirsDeep([int]$maxDepth = 4, [scriptblock]$onProgress 
         $p = $cur.Path
         $dep = $cur.Depth
         $visited++
+        # 停止检查放在每轮开头：不依赖 100ms 节流的 UI 回调，点「停止」后最多再走一个目录
+        if ($stopTest -and (& $stopTest)) { $script:deepStopped = $true; break }
         if ($onProgress -and (($uiSw.ElapsedMilliseconds - $lastUiMs) -ge 100)) {
             $lastUiMs = $uiSw.ElapsedMilliseconds
             $cont = & $onProgress $p $visited $found.Count
