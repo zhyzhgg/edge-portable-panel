@@ -378,6 +378,99 @@ public class FlatBtn : Button {
         TextRenderer.DrawText(g, Text, Font, new Rectangle(4, 1, Width - 8, Height - 3), text, fill, flags);
     }
 }
+public static class ModernFolderPicker {
+    // 现代目录选择框：IFileOpenDialog + FOS_PICKFOLDERS（Edge / VS Code 用的那套）
+    // 目的：彻底绕开旧版 SHBrowseForFolder（FolderBrowserDialog），后者在 Win10/11 上会同步枚举
+    // 桌面/网络/网盘壳扩展整棵树，遇上断开的映射盘或云同步扩展就在 Shell COM 层死锁，连 explorer 一起拖死。
+    [ComImport, Guid("DC1C5A9C-E88A-4DDE-A5A1-60F82A20AEF7"), ClassInterface(ClassInterfaceType.None)]
+    private class FileOpenDialogRCW { }
+
+    [ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("d57c7288-d4ad-4768-be02-9d969532d960")]
+    private interface IFileOpenDialog {
+        [PreserveSig] int Show(IntPtr hwndParent);          // IModalWindow
+        void SetFileTypes(uint cFileTypes, IntPtr rgFilterSpec);
+        void SetFileTypeIndex(uint iFileType);
+        void GetFileTypeIndex(out uint piFileType);
+        void Advise(IntPtr pfde, out uint pdwCookie);
+        void Unadvise(uint dwCookie);
+        void SetOptions(uint fos);
+        void GetOptions(out uint pfos);
+        void SetDefaultFolder(IShellItem psi);
+        void SetFolder(IShellItem psi);
+        void GetFolder(out IShellItem ppsi);
+        void GetCurrentSelection(out IShellItem ppsi);
+        void SetFileName([MarshalAs(UnmanagedType.LPWStr)] string pszName);
+        void GetFileName([MarshalAs(UnmanagedType.LPWStr)] out string pszName);
+        void SetTitle([MarshalAs(UnmanagedType.LPWStr)] string pszTitle);
+        void SetOkButtonLabel([MarshalAs(UnmanagedType.LPWStr)] string pszText);
+        void SetFileNameLabel([MarshalAs(UnmanagedType.LPWStr)] string pszLabel);
+        IShellItem GetResult();
+        void AddPlace(IShellItem psi, int fdap);
+        void SetDefaultExtension([MarshalAs(UnmanagedType.LPWStr)] string pszDefaultExtension);
+        void Close(int hr);
+        void SetClientGuid(ref Guid guid);
+        void ClearClientData();
+        void SetFilter(IntPtr pFilter);
+        void GetResults(out IntPtr ppenum);
+        void GetSelectedItems(out IntPtr ppsai);
+    }
+
+    [ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("43826d1e-e718-42ee-bc55-a1e261c37bfe")]
+    private interface IShellItem {
+        void BindToHandler(IntPtr pbc, ref Guid bhid, ref Guid riid, out IntPtr ppv);
+        void GetParent(out IShellItem ppsi);
+        void GetDisplayName(uint sigdnName, out IntPtr ppszName);
+        void GetAttributes(uint sfgaoMask, out uint psfgaoAttribs);
+        void Compare(IShellItem psi, uint hint, out int piOrder);
+    }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
+    private static extern void SHCreateItemFromParsingName(
+        [MarshalAs(UnmanagedType.LPWStr)] string pszPath, IntPtr pbc,
+        [MarshalAs(UnmanagedType.LPStruct)] Guid riid,
+        [MarshalAs(UnmanagedType.Interface)] out IShellItem ppv);
+
+    // 自测用：只创建对象并读写属性，不弹窗（验证 COM 接口顺序/封送是否正确）
+    public static uint Probe() {
+        IFileOpenDialog d = (IFileOpenDialog)new FileOpenDialogRCW();
+        try {
+            uint o; d.GetOptions(out o);
+            d.SetTitle("probe");
+            uint o2; d.GetOptions(out o2);
+            return o2;
+        } finally { Marshal.ReleaseComObject(d); }
+    }
+
+    // 返回选中目录的绝对路径；用户取消返回 null；任何 COM 失败抛异常（调用方回退旧对话框）
+    public static string Pick(IntPtr owner, string title, string initial) {
+        IFileOpenDialog d = (IFileOpenDialog)new FileOpenDialogRCW();
+        try {
+            uint opts;
+            d.GetOptions(out opts);
+            d.SetOptions(opts | 0x20u | 0x40u | 0x800u);   // PICKFOLDERS | FORCEFILESYSTEM | PATHMUSTEXIST
+            if (!string.IsNullOrEmpty(title)) { d.SetTitle(title); }
+            if (!string.IsNullOrEmpty(initial)) {
+                try {
+                    IShellItem start;
+                    SHCreateItemFromParsingName(initial, IntPtr.Zero, typeof(IShellItem).GUID, out start);
+                    if (start != null) { try { d.SetFolder(start); } finally { Marshal.ReleaseComObject(start); } }
+                } catch { }
+            }
+            int hr = d.Show(owner);
+            if (hr != 0) { return null; }                  // 取消
+            IShellItem res = d.GetResult();
+            if (res == null) { return null; }
+            IntPtr psz = IntPtr.Zero;
+            try {
+                res.GetDisplayName(0x80058000u, out psz);  // SIGDN_FILESYSPATH
+                return (psz == IntPtr.Zero) ? null : Marshal.PtrToStringUni(psz);
+            } finally {
+                if (psz != IntPtr.Zero) { Marshal.FreeCoTaskMem(psz); }
+                Marshal.ReleaseComObject(res);
+            }
+        } finally { Marshal.ReleaseComObject(d); }
+    }
+}
 "@
 
 # ---------------- 系统深色/浅色主题自动检测 ----------------
@@ -2013,6 +2106,25 @@ function New-DialogBase([string]$title, [int]$width, [switch]$NoClose) {
     return $dlg
 }
 
+function Select-FolderDialog([string]$title, [string]$initial, [IntPtr]$owner) {
+    # 全库唯一的目录选择入口：优先现代 IFileOpenDialog（FOS_PICKFOLDERS），不走旧版 SHBrowseForFolder；
+    # 旧版会在 UI 线程同步枚举桌面/网络/网盘壳扩展整棵树，遇上断开的映射盘或云同步扩展就在 Shell COM 层死锁，
+    # 连带 explorer.exe 一起拖死（2026-11-24 实机事故）。owner 必须传，否则模态层级错乱。
+    try {
+        $p = [ModernFolderPicker]::Pick($owner, $title, $initial)
+        return [string]$p          # $null → 空串，表示用户取消
+    } catch {
+        Write-Log ('现代目录选择框不可用，回退系统对话框：' + $_.Exception.Message) 'warn'
+        try {
+            $fb = New-Object System.Windows.Forms.FolderBrowserDialog
+            $fb.Description = $title
+            if ($initial -and (Test-Path -LiteralPath $initial)) { $fb.SelectedPath = $initial }
+            if ($fb.ShowDialog() -eq 'OK') { return [string]$fb.SelectedPath }
+        } catch { }
+        return ''
+    }
+}
+
 function New-TextInput($parent, [int]$x, [int]$y, [int]$w, [int]$h, [string]$text = '', [string]$align = 'Center', [switch]$Password) {
     # 圆角扁平输入框（与 FlatBtn 同款 5px 圆角 + 双层 1px 边，内部 TextBox 按 PreferredHeight 精确垂直居中）
     $shell = New-Object CardPanel
@@ -2317,10 +2429,8 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     & $showDir
     $btnResetDir.Add_Click({ $script:pendingBackupDir = ''; & $showDir })
     $btnDir.Add_Click({
-        $fb = New-Object System.Windows.Forms.FolderBrowserDialog
-        $fb.Description = '选择备份保存位置'
-        if ($script:pendingBackupDir -and (Test-Path -LiteralPath $script:pendingBackupDir)) { $fb.SelectedPath = $script:pendingBackupDir }
-        if ($fb.ShowDialog() -eq 'OK') { $script:pendingBackupDir = $fb.SelectedPath; & $showDir }
+        $gotDir = Select-FolderDialog '选择备份保存位置' $script:pendingBackupDir $dlg.Handle
+        if ($gotDir) { $script:pendingBackupDir = $gotDir; & $showDir }
     })
 
     # ── 格式行：7z（高压缩）/ zip（Win10 自带解压兼容，需内置 7za.exe）──
@@ -2445,7 +2555,7 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
 
     # ── 统一底部操作栏（恢复入口已挪到主界面「缓存与备份」组）──
     [void](Add-DialogFooter $dlg $w ($fullNoteY + $hFullNote) '开始备份' 'primary')
-    $res = $dlg.ShowDialog()
+    $res = $dlg.ShowDialog($form)
     $enc = [bool]$chk.Checked
     $keep = Normalize-Keep $boxKeep.Text
     $dirOut = [string]$script:pendingBackupDir
@@ -2483,7 +2593,7 @@ function Show-PwDialog([string]$title, [string]$note, [bool]$confirm) {
 
     [void](Add-DialogFooter $dlg $w ($y - (S 4)) '确定' 'primary')
     $dlg.Add_Shown({ $t1.Focus() })
-    $res = $dlg.ShowDialog()
+    $res = $dlg.ShowDialog($form)
     $v1 = $t1.Text
     $v2 = if ($t2) { $t2.Text } else { '' }
     $dlg.Dispose()
@@ -3205,19 +3315,18 @@ function Show-PkgPickerDialog([string[]]$foundDirs, [string]$curExeDir, [string]
     })
     $btnBrowse = New-DialogBtn $ft.Footer ($pad + $wDeep + (S 8)) (S 13) $wBrowse (S 30) '浏览目录…' 'secondary'
     $btnBrowse.Add_Click({
-        $fb = New-Object System.Windows.Forms.FolderBrowserDialog
-        $fb.Description = '选择便携 Edge 根目录（包含 Edge\msedge.exe）'
-        if ($fb.ShowDialog() -eq 'OK') {
-            if (Test-PortableEdgeDir $fb.SelectedPath) {
-                $script:pickedBrowseDir = $fb.SelectedPath
+        $gotB = Select-FolderDialog '选择便携 Edge 根目录（包含 Edge\msedge.exe）' '' $dlg.Handle
+        if ($gotB) {
+            if (Test-PortableEdgeDir $gotB) {
+                $script:pickedBrowseDir = $gotB
                 $dlg.DialogResult = 'OK'
                 $dlg.Close()
             } else {
-                Write-Log ('所选目录不是便携 Edge 目录：' + $fb.SelectedPath) 'warn'
+                Write-Log ('所选目录不是便携 Edge 目录：' + $gotB) 'warn'
             }
         }
     })
-    $res = $dlg.ShowDialog()
+    $res = $dlg.ShowDialog($form)
     $sel = $list.SelectedIndex
     $browsed = $script:pickedBrowseDir
     $script:pickedBrowseDir = ''
@@ -3364,21 +3473,16 @@ function Show-RestorePicker($packages) {
 
     # 「选择目录…」并入底部操作栏左侧（与右侧主/次按钮同一行），不再单独占一行
     $pickDirAction = {
-        $fbd = New-Object System.Windows.Forms.FolderBrowserDialog
-        $fbd.Description = '选择备份包所在的目录（自动记住上次选择）'
-        $fbd.ShowNewFolderButton = $false
-        $cur = [string](Get-BackupCfg).rdir
-        if ($cur -and (Test-Path -LiteralPath $cur)) { $fbd.SelectedPath = $cur }
-        if ($fbd.ShowDialog() -eq 'OK' -and (Test-Path -LiteralPath $fbd.SelectedPath)) {
-            $script:pickedRestoreDir = $fbd.SelectedPath
-            $n = & $addDirPkgs $fbd.SelectedPath '（外部目录）'
+        $gotDir2 = Select-FolderDialog '选择备份包所在的目录（自动记住上次选择）' ([string](Get-BackupCfg).rdir) $dlg.Handle
+        if ($gotDir2) {
+            $script:pickedRestoreDir = $gotDir2
+            $n = & $addDirPkgs $gotDir2 '（外部目录）'
             if ($n -gt 0) { $list.SelectedIndex = $list.Items.Count - $n }
-            else { Write-Log ('该目录里没有 Edge_Portable_*.7z / *.zip 备份包：' + $fbd.SelectedPath) 'warn' }
+            else { Write-Log ('该目录里没有 Edge_Portable_*.7z / *.zip 备份包：' + $gotDir2) 'warn' }
         }
-        $fbd.Dispose()
     }
     [void](Add-DialogFooter $dlg $w ($lbY + (S 132)) '开始恢复' 'primary' '取消' '选择目录…' $pickDirAction)
-    $res = $dlg.ShowDialog()
+    $res = $dlg.ShowDialog($form)
     $idx = $list.SelectedIndex
     $dlg.Dispose()
     if ($res -ne 'OK' -or $idx -lt 0 -or $idx -ge $candList.Count) { return $null }
