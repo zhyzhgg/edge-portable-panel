@@ -675,19 +675,21 @@ function Enable-DoubleBuffer($c) {
         if ($pi) { $pi.SetValue($c, $true, $null) }
     } catch { }
 }
-# 顶栏第二行：路径（左键打开目录）+ 「· 切换目录」（与顶栏第一行 GitHub/反馈同语系，左缘与主标题 X=18 严格对齐）
-$swLinkW = [int][math]::Max((S 58), ([System.Windows.Forms.TextRenderer]::MeasureText('切换目录', $fontSmall).Width + (S 4)))
-$swSepW = S 14
-$subMaxW = (S 410) - $swSepW - $swLinkW - (S 6)
+# 顶栏第二行：路径（左键打开目录）+ 「· 切换目录」（X=20 对齐上方大标题左墨迹，NoPadding 紧贴收口，长路径中段省略+悬停全显）
+$script:noPadMeasure = [System.Windows.Forms.TextFormatFlags]::NoPadding -bor [System.Windows.Forms.TextFormatFlags]::NoPrefix
+$swLinkW = [int][math]::Max((S 56), ([System.Windows.Forms.TextRenderer]::MeasureText('切换目录', $fontSmall, (New-Object System.Drawing.Size(9999, 9999)), $script:noPadMeasure).Width + (S 6)))
+$swSepW = S 12
+$subMaxW = (S 404) - $swSepW - $swLinkW - (S 4)
 $lblSub = New-Object System.Windows.Forms.Label
 $lblSub.Font = $fontSub
 $lblSub.ForeColor = $clrOnDarkMuted
 $lblSub.AutoSize = $false
+$lblSub.AutoEllipsis = $true
+$lblSub.UseMnemonic = $false
 $lblSub.TextAlign = 'MiddleLeft'
-    $lblSub.AutoEllipsis = $true   # 高 DPI 下若实测偏窄，宁可显示"…"也不要硬切半个字
-$lblSub.Location = New-Object System.Drawing.Point((S 18), (S 43))
+$lblSub.Location = New-Object System.Drawing.Point((S 20), (S 41))
 $lblSub.Text = Format-MiddleEllipsisPath $pkgRoot $fontSub ($subMaxW - (S 2))
-$lblSubW = [int][Math]::Min(([System.Windows.Forms.TextRenderer]::MeasureText($lblSub.Text, $fontSub).Width + (S 2)), $subMaxW)
+$lblSubW = [int][Math]::Min(([System.Windows.Forms.TextRenderer]::MeasureText($lblSub.Text, $fontSub, (New-Object System.Drawing.Size(9999, 9999)), $script:noPadMeasure).Width + (S 6)), $subMaxW)
 $lblSub.Size = New-Object System.Drawing.Size($lblSubW, (S 20))
 $lblSub.Cursor = 'Hand'
 $lblSub.Add_Click({
@@ -702,10 +704,10 @@ $header.Controls.Add($lblSub)
 $script:lblSubSep = New-Object System.Windows.Forms.Label
 $script:lblSubSep.Text = '·'
 $script:lblSubSep.Font = $fontSmall
-$script:lblSubSep.ForeColor = [System.Drawing.Color]::FromArgb(110, $clrOnDarkMuted)
+$script:lblSubSep.ForeColor = [System.Drawing.Color]::FromArgb(115, $clrOnDarkMuted)
 $script:lblSubSep.AutoSize = $false
 $script:lblSubSep.TextAlign = 'MiddleCenter'
-$script:lblSubSep.Location = New-Object System.Drawing.Point([int]($lblSub.Right + (S 2)), (S 43))
+$script:lblSubSep.Location = New-Object System.Drawing.Point([int]($lblSub.Right + (S 2)), (S 41))
 $script:lblSubSep.Size = New-Object System.Drawing.Size($swSepW, (S 20))
 $header.Controls.Add($script:lblSubSep)
 
@@ -715,7 +717,7 @@ $script:btnSwitchPkg.Font = $fontSmall
 $script:btnSwitchPkg.ForeColor = $clrOnDarkMuted
 $script:btnSwitchPkg.AutoSize = $false
 $script:btnSwitchPkg.TextAlign = 'MiddleLeft'
-$script:btnSwitchPkg.Location = New-Object System.Drawing.Point([int]($script:lblSubSep.Right + (S 2)), (S 43))
+$script:btnSwitchPkg.Location = New-Object System.Drawing.Point([int]($script:lblSubSep.Right + (S 2)), (S 41))
 $script:btnSwitchPkg.Size = New-Object System.Drawing.Size($swLinkW, (S 20))
 $script:btnSwitchPkg.Cursor = 'Hand'
 $script:btnSwitchPkg.Add_MouseEnter({ if ($script:btnSwitchPkg.Enabled) { $script:btnSwitchPkg.ForeColor = $clrHeaderAccent } })
@@ -2275,24 +2277,45 @@ function Show-BackupDialog([bool]$edgeRunning, [hashtable]$cfg) {
     $dlg.Controls.Add($lbKeep2)
 
     $script:pendingBackupDir = [string]$cfg.dir
+    $btnDirW = S 60; $btnOpenW = S 50; $btnResetW = S 48; $btnGap = S 6
+    $btnDirX = $w - $pad - $btnDirW
+    $btnOpenX = $btnDirX - $btnGap - $btnOpenW
+    $btnResetX = $btnOpenX - $btnGap - $btnResetW
+    $lbDirX = $pad + (S 150)
+    $lbDirW = $btnResetX - $lbDirX - (S 8)
+
     $lbDir = New-Object System.Windows.Forms.Label
     $lbDir.AutoSize = $false
-    $lbDir.Size = New-Object System.Drawing.Size((S 236), (S 20))
+    $lbDir.Size = New-Object System.Drawing.Size($lbDirW, (S 26))
+    $lbDir.TextAlign = 'MiddleLeft'
     $lbDir.AutoEllipsis = $true
+    $lbDir.UseMnemonic = $false
     $lbDir.ForeColor = $clrMuted
-    $lbDir.Location = New-Object System.Drawing.Point(($pad + (S 156)), ($row2Y + (S 4)))
+    $lbDir.Location = New-Object System.Drawing.Point($lbDirX, $row2Y)
     $dlg.Controls.Add($lbDir)
 
-    $btnDir = New-DialogBtn $dlg ($w - $pad - (S 64)) $row2Y (S 64) (S 26) '更改…' 'secondary'
-    $btnOpen = New-DialogBtn $dlg ($w - $pad - (S 64) - (S 6) - (S 54)) $row2Y (S 54) (S 26) '打开' 'secondary'
+    $btnResetDir = New-DialogBtn $dlg $btnResetX $row2Y $btnResetW (S 26) '默认' 'secondary'
+    $btnOpen = New-DialogBtn $dlg $btnOpenX $row2Y $btnOpenW (S 26) '打开' 'secondary'
+    $btnDir = New-DialogBtn $dlg $btnDirX $row2Y $btnDirW (S 26) '更改…' 'secondary'
     $btnOpen.Add_Click({ try { Start-Process explorer.exe -ArgumentList ('"' + (Resolve-BackupDir $script:pendingBackupDir) + '"') } catch { } })
 
     $showDir = {
         $d = $script:pendingBackupDir
-        if ([string]::IsNullOrWhiteSpace($d)) { $lbDir.Text = '备份到：包根目录' }
-        else { $lbDir.Text = '备份到：' + $d }
+        $isCustom = -not [string]::IsNullOrWhiteSpace($d)
+        if (-not $isCustom) {
+            $lbDir.Text = '备份到：包根目录'
+            if ($script:tip) { $script:tip.SetToolTip($lbDir, ('当前备份到默认包根目录：' + $pkgRoot)) }
+        } else {
+            $prefixW = [System.Windows.Forms.TextRenderer]::MeasureText('备份到：', $fontBase).Width
+            $dispPath = Format-MiddleEllipsisPath $d $fontBase ([int][math]::Max((S 40), ($lbDirW - $prefixW - (S 4))))
+            $lbDir.Text = '备份到：' + $dispPath
+            if ($script:tip) { $script:tip.SetToolTip($lbDir, ('备份保存目录：' + $d)) }
+        }
+        $btnResetDir.Enabled = $isCustom
     }
+    if ($script:tip) { $script:tip.SetToolTip($btnResetDir, '一键恢复为默认备份目录（包根目录）') }
     & $showDir
+    $btnResetDir.Add_Click({ $script:pendingBackupDir = ''; & $showDir })
     $btnDir.Add_Click({
         $fb = New-Object System.Windows.Forms.FolderBrowserDialog
         $fb.Description = '选择备份保存位置'
@@ -2472,9 +2495,11 @@ function Show-ProgressWindow([string]$title, [switch]$Stoppable, [switch]$TopMos
     $dlg = New-DialogBase $title $w -NoClose
     $dlg.BackColor = $clrCard
 
-    $metaW = S 116
+    $metaW = S 152
     $lbStatus = New-Object System.Windows.Forms.Label
     $lbStatus.AutoSize = $false
+    $lbStatus.AutoEllipsis = $true
+    $lbStatus.UseMnemonic = $false
     $lbStatus.Font = $fontGroup
     $lbStatus.Size = New-Object System.Drawing.Size(($inner - $metaW - (S 8)), (S 22))
     $lbStatus.Location = New-Object System.Drawing.Point($pad, $pad)
@@ -2485,6 +2510,8 @@ function Show-ProgressWindow([string]$title, [switch]$Stoppable, [switch]$TopMos
 
     $lbMeta = New-Object System.Windows.Forms.Label
     $lbMeta.AutoSize = $false
+    $lbMeta.AutoEllipsis = $true
+    $lbMeta.UseMnemonic = $false
     $lbMeta.Font = $fontSmall
     $lbMeta.Size = New-Object System.Drawing.Size($metaW, (S 22))
     $lbMeta.Location = New-Object System.Drawing.Point(($w - $pad - $metaW), $pad)
@@ -2504,31 +2531,33 @@ function Show-ProgressWindow([string]$title, [switch]$Stoppable, [switch]$TopMos
     $bar.Location = New-Object System.Drawing.Point($pad, ($pad + (S 30)))
     $dlg.Controls.Add($bar)
 
+    # TopLeft 固定顶基线 + UseMnemonic=$false + AutoEllipsis=$true，避免中英文路径切换时上下跳动
     $lbFile = New-Object System.Windows.Forms.Label
     $lbFile.AutoSize = $false
     $lbFile.AutoEllipsis = $true
+    $lbFile.UseMnemonic = $false
     $lbFile.Font = $fontSmall
-    $lbFile.Size = New-Object System.Drawing.Size($inner, (S 18))
+    $lbFile.Size = New-Object System.Drawing.Size($inner, (S 20))
     $lbFile.Location = New-Object System.Drawing.Point($pad, ($pad + (S 48)))
     $lbFile.ForeColor = $clrMuted
-    $lbFile.TextAlign = 'MiddleLeft'
+    $lbFile.TextAlign = 'TopLeft'
     $lbFile.Text = ''
     $dlg.Controls.Add($lbFile)
 
     $stopBtn = $null
-    $baseH = $pad + (S 48) + (S 18) + $pad
+    $fileBottom = $pad + (S 48) + (S 20)
+    $baseH = $fileBottom + $pad
     if ($Stoppable) {
-        # 可中断任务（如深度搜索）：给一个明确的「停止」出口，别让用户只能干等
+        # 可中断任务（如深度搜索）：走标准 New-DialogBtn，右缘对齐进度条；事件中通过 $s 操作自身避免局部变量失效
         $script:progressStop = $false
-        $stopBtn = New-Object FlatBtn
-        $stopBtn.Text = '停止'
-        $stopBtn.Font = $fontSmall
-        $stopBtn.Size = New-Object System.Drawing.Size((S 72), (S 26))
-        $stopBtn.Location = New-Object System.Drawing.Point(($w - $pad - (S 72)), ($baseH + (S 4)))
-        Apply-FlatBtnTheme $stopBtn $false
-        $stopBtn.Add_Click({ $script:progressStop = $true; $stopBtn.Enabled = $false; $stopBtn.Text = '停止中…' })
-        $dlg.Controls.Add($stopBtn)
-        $baseH = $baseH + (S 34)
+        $stopY = $fileBottom + (S 10)
+        $stopBtn = New-DialogBtn $dlg ($w - $pad - (S 76)) $stopY (S 76) (S 26) '停止' 'secondary'
+        $stopBtn.Add_Click({
+            param($s, $e)
+            $script:progressStop = $true
+            if ($s) { $s.Enabled = $false; $s.Text = '停止中…' }
+        })
+        $baseH = $stopY + (S 26) + $pad
     }
     $dlg.ClientSize = New-Object System.Drawing.Size($w, $baseH)
     if ($TopMost) { $dlg.TopMost = $true }
@@ -3089,22 +3118,24 @@ function Show-PkgPickerDialog([string[]]$foundDirs, [string]$curExeDir, [string]
             $deepSw = [Diagnostics.Stopwatch]::StartNew()
             if ($prog) {
                 $prog.Bar.Indeterminate = $true
-                $prog.Status.Text = '正在扫描本机固定盘符（最多 4 层，60 秒自动停止）…'
-                if ($prog.Meta) { $prog.Meta.Text = '搜索中' }
+                $prog.Status.Text = '正在深度搜索便携 Edge（最多 4 层）…'
+                if ($prog.Meta) { $prog.Meta.Text = '准备中…' }
                 [System.Windows.Forms.Application]::DoEvents()
             }
+            $script:deepLastVis = 0
             $deepDirs = @(Find-PortableEdgeDirsDeep 4 {
                 param($curP, $vis, $hit)
+                $script:deepLastVis = $vis
                 if ($script:closeRequested -or $dlg.IsDisposed -or $script:progressStop) { return $false }
                 if ($deepSw.Elapsed.TotalSeconds -ge 60) { $script:progressStop = $true; return $false }
                 if ($prog) {
-                    $prog.File.Text = $curP
-                    if ($prog.Meta) { $prog.Meta.Text = ('已扫描 ' + $vis + ' 目录 / 发现 ' + $hit + ' 份 / ' + [int]$deepSw.Elapsed.TotalSeconds + 's') }
+                    $prog.File.Text = Format-MiddleEllipsisPath $curP $fontSmall ($prog.File.Width - (S 4))
+                    if ($prog.Meta) { $prog.Meta.Text = ('{0} 目录 · {1} 份 · {2}s' -f $vis, $hit, [int]$deepSw.Elapsed.TotalSeconds) }
                 }
                 [System.Windows.Forms.Application]::DoEvents()
                 return $true
             })
-            if ($script:progressStop -and $prog) { Write-Log ('深度搜索已停止（已扫 ' + $vis + ' 个目录）') 'warn' }
+            if ($script:progressStop -and $prog) { Write-Log ('深度搜索已停止（已扫 ' + $script:deepLastVis + ' 个目录）') 'warn' }
             $list.Items.Clear()
             $choices.Clear()
             $newDef = 0
@@ -3153,19 +3184,19 @@ function Show-PkgPickerDialog([string[]]$foundDirs, [string]$curExeDir, [string]
 }
 
 function Update-PathLabel {
-    # 路径按可用宽做中段省略，标签紧贴文字收口，后跟「· 切换目录」
+    # 路径按可用宽做中段省略，NoPadding 紧贴文字收口，后跟「· 切换目录」
     if (-not $lblSub) { return }
     $t = Format-MiddleEllipsisPath $pkgRoot $fontSub ($subMaxW - (S 2))
     $lblSub.Text = $t
-    $w = [System.Windows.Forms.TextRenderer]::MeasureText($t, $fontSub).Width + (S 2)
+    $w = [System.Windows.Forms.TextRenderer]::MeasureText($t, $fontSub, (New-Object System.Drawing.Size(9999, 9999)), $script:noPadMeasure).Width + (S 6)
     if ($w -gt $subMaxW) { $w = $subMaxW }
     $lblSub.Size = New-Object System.Drawing.Size([int]$w, (S 20))
     if ($script:lblSubSep) {
-        $script:lblSubSep.Location = New-Object System.Drawing.Point([int]($lblSub.Right + (S 2)), (S 43))
+        $script:lblSubSep.Location = New-Object System.Drawing.Point([int]($lblSub.Right + (S 2)), (S 41))
     }
     if ($script:btnSwitchPkg) {
         $swX = if ($script:lblSubSep) { $script:lblSubSep.Right + (S 2) } else { $lblSub.Right + (S 10) }
-        $script:btnSwitchPkg.Location = New-Object System.Drawing.Point([int]$swX, (S 43))
+        $script:btnSwitchPkg.Location = New-Object System.Drawing.Point([int]$swX, (S 41))
     }
     if ($script:tip) {
         $script:tip.SetToolTip($lblSub, ('单击在资源管理器中打开目录：' + $pkgRoot))

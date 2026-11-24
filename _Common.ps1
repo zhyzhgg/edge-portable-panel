@@ -168,14 +168,18 @@ function Find-PortableEdgeDirs([string]$lastSaved = '') {
     return @($found)
 }
 function Find-PortableEdgeDirsDeep([int]$maxDepth = 4, [scriptblock]$onProgress = $null) {
-    <#  全机固定盘符深度搜索便携 Edge（最多 4 层，跳过系统/开发噪声目录，不进入已命中目录内部）。
-        onProgress 回调接收当前扫描路径，供进度窗实时刷新并调用 DoEvents 防假死。 #>
+    <#  全机固定盘符深度搜索便携 Edge（最多 4 层，纯 .NET 枚举 + 噪声目录剪枝 + 100ms 节流回调）。 #>
     $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
     $found = New-Object System.Collections.ArrayList
     $skip = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($n in @('Windows', 'Program Files', 'Program Files (x86)', 'ProgramData', '$Recycle.Bin',
-                     'System Volume Information', 'Recovery', 'PerfLogs', 'WinSxS', 'node_modules',
-                     '.git', '.venv', 'venv', '__pycache__', 'Temp', 'Cache', 'Packages', 'Intel', 'AMD', 'NVIDIA')) {
+                     'System Volume Information', 'Recovery', 'PerfLogs', 'WinSxS', 'MSOCache', 'Config.Msi',
+                     'AppData', 'WindowsApps', 'Packages', 'Intel', 'AMD', 'NVIDIA',
+                     'node_modules', '.git', '.hg', '.svn', '.venv', 'venv', '__pycache__', '.cache', '.vscode', '.idea',
+                     'Temp', 'tmp', 'Cache', 'Caches', 'Logs',
+                     'WeChat Files', 'xwechat_files', 'Tencent Files', 'WXWork', 'DingTalk',
+                     'Steam', 'SteamLibrary', 'Epic Games', 'WeGameApps', 'Riot Games',
+                     'OneDrive', 'iCloudDrive', 'Pictures', 'Videos', 'Music', 'Photos')) {
         [void]$skip.Add($n)
     }
     $q = New-Object 'System.Collections.Generic.Queue[object]'
@@ -183,25 +187,38 @@ function Find-PortableEdgeDirsDeep([int]$maxDepth = 4, [scriptblock]$onProgress 
         $q.Enqueue([pscustomobject]@{ Path = $drv.RootDirectory.FullName.TrimEnd('\'); Depth = 0 })
     }
     $visited = 0
+    $uiSw = [System.Diagnostics.Stopwatch]::StartNew()
+    $lastUiMs = -1000
     while ($q.Count -gt 0) {
         $cur = $q.Dequeue()
         $p = $cur.Path
         $dep = $cur.Depth
         $visited++
-        if ($onProgress -and ($visited % 20 -eq 0)) {
+        if ($onProgress -and (($uiSw.ElapsedMilliseconds - $lastUiMs) -ge 100)) {
+            $lastUiMs = $uiSw.ElapsedMilliseconds
             $cont = & $onProgress $p $visited $found.Count
             if ($cont -eq $false) { break }
         }
-        if ($dep -gt 0 -and (Test-PortableEdgeDir $p)) {
-            if (-not $seen.Contains($p)) { [void]$seen.Add($p); [void]$found.Add($p) }
-            continue
+        if ($dep -gt 0) {
+            # 单次原生文件检查快速过滤，命中后再跑完整 Test-PortableEdgeDir，避免对每个目录做多次 Test-Path
+            if ([System.IO.File]::Exists($p + '\Edge\msedge.exe') -and (Test-PortableEdgeDir $p)) {
+                if (-not $seen.Contains($p)) { [void]$seen.Add($p); [void]$found.Add($p) }
+                continue
+            }
         }
         if ($dep -ge $maxDepth) { continue }
         $scanRoot = if ($dep -eq 0) { $p + '\' } else { $p }
-        foreach ($sub in @(Get-ChildItem -LiteralPath $scanRoot -Directory -ErrorAction SilentlyContinue)) {
-            if ($skip.Contains($sub.Name) -or $sub.Name.StartsWith('$')) { continue }
-            $q.Enqueue([pscustomobject]@{ Path = $sub.FullName; Depth = ($dep + 1) })
-        }
+        try {
+            foreach ($subPath in [System.IO.Directory]::EnumerateDirectories($scanRoot)) {
+                $name = [System.IO.Path]::GetFileName($subPath)
+                if ([string]::IsNullOrEmpty($name) -or $name.StartsWith('$') -or $skip.Contains($name)) { continue }
+                try {
+                    $attr = [System.IO.File]::GetAttributes($subPath)
+                    if (($attr -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
+                } catch { continue }
+                $q.Enqueue([pscustomobject]@{ Path = $subPath; Depth = ($dep + 1) })
+            }
+        } catch { }
     }
     return @($found)
 }
