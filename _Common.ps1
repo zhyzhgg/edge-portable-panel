@@ -167,3 +167,30 @@ function Find-PortableEdgeDirs([string]$lastSaved = '') {
     }
     return @($found)
 }
+function Test-EdgeAppContainerAcl([string]$dir) {
+    <#  便携版 Edge 若装在非 Program Files 目录，Windows 不会给该目录授予 AppContainer 的
+        两个包 SID（S-1-15-2-1 / S-1-15-2-2）读执行权限。Edge 攒满 100 次启动后正式启用
+        RendererAppContainer 强沙箱，此时 renderer 读不到目录内 DLL，一个渲染进程都起不来
+        （窗口能开、所有页面空白，含 edge://settings）。本函数只做只读检查。 #>
+    if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { return $false }
+    try {
+        $acl = Get-Acl -LiteralPath $dir
+        $ids = @($acl.Access | ForEach-Object { [string]$_.IdentityReference })
+        $hasAll = @($ids | Where-Object { $_ -match 'S-1-15-2-1|ALL APPLICATION PACKAGES' }).Count -gt 0
+        $hasRestricted = @($ids | Where-Object { $_ -match 'S-1-15-2-2|所有受限制的应用程序包|RESTRICTED APPLICATION PACKAGES' }).Count -gt 0
+        return ($hasAll -and $hasRestricted)
+    } catch { return $false }
+}
+
+function Repair-EdgeAppContainerAcl([string]$dir) {
+    <#  幂等补齐上面那两个 SID 的 (OI)(CI)(RX)。便携包目录的 Owner 是当前用户，
+        普通权限即可改 ACL，不需要 UAC。返回 $true 表示最终两个 SID 都在。
+        失败不抛异常 —— 由调用方决定怎么提示，绝不静默改写其它配置。 #>
+    if (Test-EdgeAppContainerAcl $dir) { return $true }
+    if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { return $false }
+    try {
+        $null = & icacls.exe $dir /grant '*S-1-15-2-1:(OI)(CI)(RX)' '*S-1-15-2-2:(OI)(CI)(RX)' 2>&1
+        if ($LASTEXITCODE -ne 0) { return $false }
+        return (Test-EdgeAppContainerAcl $dir)
+    } catch { return $false }
+}

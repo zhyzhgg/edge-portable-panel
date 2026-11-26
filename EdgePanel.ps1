@@ -8,7 +8,7 @@
 #>
 
 $ErrorActionPreference = 'Stop'
-$script:panelVersion = '1.4.0'
+$script:panelVersion = '1.4.1'
 $script:panelUpdateRepo = 'zhyzhgg/edge-portable-panel'   # 自更新源（公开仓库 Releases）
 # 面板 EXE 的标准名：打包判定 / 恢复白名单 / 恢复提示三处共用，避免口径分裂
 $script:panelExeNameRe = '^(?i)(EdgePanel|Edge面板)\.exe$'
@@ -1451,19 +1451,23 @@ function Update-Status {
 }
 
 
-function Import-PolicyReg([string]$regFile, [string]$okLog = '策略导入完成') {
+function Import-PolicyReg([string]$regFile, [string]$okLog = '策略导入完成', [string]$EdgeDir = '') {
     # 唯一实现：经 UAC helper 导入策略键并解析结果（策略键对普通用户只读，必须提权）
     # 临时文件名不可预测（GUID 片段）：%TEMP% 里预置同名文件无法劫持提权 helper
     $stamp = ([guid]::NewGuid().ToString('N')).Substring(0, 12)
     $helper = Join-Path $env:TEMP ('edgepanel-import-' + $stamp + '.ps1')
     $result = Join-Path $env:TEMP ('edgepanel-import-result-' + $stamp + '.txt')
     $helperCode = @'
-param([string]$RegFile, [string]$ResultFile)
+param([string]$RegFile, [string]$ResultFile, [string]$EdgeDir)
 $lines = New-Object System.Collections.Generic.List[string]
 try {
     $out2 = & reg.exe import $RegFile 2>&1
     if ($LASTEXITCODE -eq 0) { $lines.Add('RESULT: OK') }
     else { $lines.Add('RESULT: FAIL ' + (($out2 | Out-String).Trim())) }
+    # 同一次提权里顺手补 AppContainer 目录权限（幂等，零额外 UAC）
+    if ($EdgeDir -and (Test-Path -LiteralPath $EdgeDir)) {
+        $null = & icacls.exe $EdgeDir /grant '*S-1-15-2-1:(OI)(CI)(RX)' '*S-1-15-2-2:(OI)(CI)(RX)' 2>&1
+    }
 } catch {
     $lines.Add('RESULT: FAIL ' + $_.Exception.Message)
 } finally {
@@ -1478,7 +1482,8 @@ try {
         try {
             $psi = @(
                 '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $helper + '"'),
-                '-RegFile', ('"' + $regFile + '"'), '-ResultFile', ('"' + $result + '"')
+                '-RegFile', ('"' + $regFile + '"'), '-ResultFile', ('"' + $result + '"'),
+                '-EdgeDir', ('"' + $EdgeDir + '"')
             )
             Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
                 -ArgumentList $psi -Verb RunAs -WindowStyle Hidden -Wait | Out-Null
@@ -1549,8 +1554,19 @@ function Apply-RecommendedPolicies {
     }
     [System.IO.File]::WriteAllLines($regFile, $out, [System.Text.Encoding]::Unicode)
 
+    # 顺手补齐 AppContainer 目录权限（幂等：已有就跳过；普通权限即可，目录 Owner 是当前用户）
+    # 根因：便携目录默认没有 S-1-15-2-1 / S-1-15-2-2。Edge 攒满 100 次启动后会正式启用
+    # RendererAppContainer 强沙箱，届时 renderer 读不到目录内 DLL ⇒ 一个渲染进程都起不来，
+    # 表现为「窗口能开、所有页面空白（含 edge://settings）、无崩溃转储」。
+    if (Repair-EdgeAppContainerAcl $edgeRoot) {
+        Write-Log '已确认 AppContainer 目录权限（renderer 强沙箱可正常工作）'
+    } else {
+        Write-Log '提示：AppContainer 目录权限未能自动补齐。若以后出现「能开但全白屏」，请以管理员身份运行：' 'warn'
+        Write-Log ('  icacls "' + $edgeRoot + '" /grant "*S-1-15-2-1:(OI)(CI)(RX)" "*S-1-15-2-2:(OI)(CI)(RX)"') 'warn'
+    }
+
     # 复用统一的导入入口（UAC helper 与结果解析只有一份实现）
-    $ok = Import-PolicyReg $regFile '推荐策略应用完成'
+    $ok = Import-PolicyReg $regFile '推荐策略应用完成' -EdgeDir $edgeRoot
     if ($ok) { Write-Log '完全退出 Edge 再打开才生效。' 'warn'; try { Show-PolicyDrift } catch { } }
     } catch {
         Write-Log ('应用推荐策略失败：' + $_.Exception.Message) 'err'
