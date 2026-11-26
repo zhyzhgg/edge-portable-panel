@@ -8,7 +8,7 @@
 #>
 
 $ErrorActionPreference = 'Stop'
-$script:panelVersion = '1.4.1'
+$script:panelVersion = '1.4.2'
 $script:panelUpdateRepo = 'zhyzhgg/edge-portable-panel'   # 自更新源（公开仓库 Releases）
 # 面板 EXE 的标准名：打包判定 / 恢复白名单 / 恢复提示三处共用，避免口径分裂
 $script:panelExeNameRe = '^(?i)(EdgePanel|Edge面板)\.exe$'
@@ -18,6 +18,7 @@ $script:panelProbeHandle = $null
 $script:panelProbeTimer = $null
 $script:panelProbeDelay = $null
 $script:pwaGapChecked = $false
+$script:startupModalShown = $false   # 本次启动是否已弹过启动期模态框（避免连续弹多个）
 $script:panelProbeDone = $false
 $script:panelProbeCancel = $null
 $script:policyKey = $env:EP_POLICY_KEY
@@ -2868,6 +2869,7 @@ function Prompt-IfEdgeRunning {
     $running = @(Get-PackageProcs)
     if ($running.Count -gt 0) {
         Write-Log ('检测到本包 Edge 正在运行（' + $running.Count + ' 个进程）') 'warn'
+        $script:startupModalShown = $true   # 启动期已弹过框，后续启动期弹窗让位（避免连着弹两个）
         $ansRun = $(if (Show-DialogAsk 'Edge 正在运行' ("当前便携包 Edge 正在运行（" + $running.Count + " 个进程）。`r`n`r`n" + "执行瘦身、清理或更新前需先退出浏览器。`r`n`r`n" + "是否现在关闭？（先正常关闭窗口，8 秒未退出将强制结束，不影响系统其他浏览器）") '关闭并继续' '暂不') { 'Yes' } else { 'No' })
         if ($ansRun -eq 'Yes') { Close-Edge }
         else { Write-Log '保持运行；等你要瘦身/清理/备份时，面板会再问一次要不要关。' 'warn' }
@@ -3905,6 +3907,15 @@ if (-not $script:updateBackupOk -and -not $dry -and -not $RunOnce) {
         $new = Get-LocalVersion
         if ($new -eq $target.version) {
             Write-Log ('更新成功：' + $new) 'ok'
+            # 补 AppContainer 目录权限：首次部署时 Edge\ 是新建目录，没有可继承的来源。
+            # 不加这句，新装用户攒满 100 次启动后必然出现「窗口能开、所有页面全白」。
+            # 幂等：已有就跳过（普通权限即可，目录 Owner 是当前用户）。
+            if (Repair-EdgeAppContainerAcl $edgeRoot) {
+                Write-Log '已确认 AppContainer 目录权限（renderer 强沙箱可正常工作）'
+            } else {
+                Write-Log '提示：AppContainer 目录权限未能自动补齐。若以后出现「能开但全白屏」，请以管理员身份运行：' 'warn'
+                Write-Log ('  icacls "' + $edgeRoot + '" /grant "*S-1-15-2-1:(OI)(CI)(RX)" "*S-1-15-2-2:(OI)(CI)(RX)"') 'warn'
+            }
             if ($withSlim) {
                 Write-Log '更新完成，接着执行「一键瘦身 + 关闭组件更新」…'
                 $rs = Invoke-Ps $edgeTune @('-Action', 'SlimAll', '-Quiet', '-Root', $pkgRoot)
@@ -4181,6 +4192,8 @@ return ('ERR|')
         Write-Log ('静默探测：面板有新版本 v' + $script:panelVersion + ' → v' + $tagText) 'warn'
         if ($script:isBusy) { return }
         if ($RunOnce) { return }
+        # 启动期可能正有别的模态框（如权限补齐提示）：此时不叠上来，高亮标记已设，下次再提示
+        if (-not $form.Enabled) { return }
         $ansP = $(if (Show-DialogAsk '面板有新版本' ("发现面板新版本：v" + $script:panelVersion + " → v" + $tagText + "`r`n`r`n是否立即下载并更新？会校验文件完整性，替换后自动重启。
 
 选「暂不」的话，顶栏「更新面板」按钮会保持绿色，随时可以手动更新。") '现在更新' '暂不' -FocusCancel) { 'Yes' } else { 'No' })
@@ -4447,8 +4460,47 @@ $form.Add_Shown({
                 }
             }
             Prompt-IfEdgeRunning
+            # AppContainer 权限：静默补齐失败时强提醒（每次启动都提醒，直到修好）。
+            # 放在 Prompt-IfEdgeRunning 之后，且本次启动已弹过框就跳过 —— 避免连着弹两个模态框。
+            if (-not $script:startupModalShown -and $form.Enabled -and
+                -not (Test-EdgeAppContainerAcl $edgeRoot) -and (Test-EdgeAclApplicable $edgeRoot)) {
+                $aclMsg = ("Edge 用满约 100 次启动后会突然出问题：窗口能打开，但所有页面全白，连 edge://settings 都进不去。" + "`r`n`r`n" +
+                           "根因是这个便携目录缺少 AppContainer 运行所需的两项权限。Edge 累积到一定启动次数后会启用更强沙箱，渲染进程读不到程序文件，于是一个页面都渲染不出来。" + "`r`n`r`n" +
+                           "点「立即补齐」会请求一次管理员权限（UAC）自动修好；只需这一次，后续更新会永久继承，不会再问。" + "`r`n`r`n" +
+                           "点「暂不」你可以继续使用面板（切目录 / 恢复备份都不受影响），但下次启动仍会提醒。")
+                if (Show-DialogAsk '需要补齐 AppContainer 权限' $aclMsg '立即补齐' '暂不') {
+                    try {
+                        $stamp = ([guid]::NewGuid().ToString('N')).Substring(0, 12)
+                        $aclHelper = Join-Path $env:TEMP ('edgepanel-aclfix-' + $stamp + '.ps1')
+                        $aclCode = "param([string]`$Dir)`r`n`$null = & icacls.exe `$Dir /grant '*S-1-15-2-1:(OI)(CI)(RX)' '*S-1-15-2-2:(OI)(CI)(RX)' 2>&1`r`n"
+                        [System.IO.File]::WriteAllText($aclHelper, $aclCode, (New-Object System.Text.UTF8Encoding($true)))
+                        Write-Log '正在请求管理员权限（UAC）以补齐 AppContainer 目录权限…'
+                        Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
+                            -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $aclHelper + '"'),'-Dir',('"' + $edgeRoot + '"')) `
+                            -Verb RunAs -WindowStyle Hidden -Wait | Out-Null
+                        Remove-Item -LiteralPath $aclHelper -Force -ErrorAction SilentlyContinue
+                        if (Test-EdgeAppContainerAcl $edgeRoot) {
+                            Write-Log 'AppContainer 目录权限已补齐（后续更新会自动继承，不再提示）' 'ok'
+                        } else {
+                            Write-Log '补齐后复检仍未通过，请手动以管理员运行：' 'err'
+                            Write-Log ('  icacls "' + $edgeRoot + '" /grant "*S-1-15-2-1:(OI)(CI)(RX)" "*S-1-15-2-2:(OI)(CI)(RX)"') 'err'
+                        }
+                    } catch {
+                        Write-Log ('补齐失败（UAC 未确认？）：' + $_.Exception.Message) 'warn'
+                    }
+                } else {
+                    Write-Log '已跳过 AppContainer 权限补齐：Edge 用满约 100 次启动后可能全白屏，建议尽快点「立即补齐」' 'warn'
+                }
+            }
         })
         $script:startupPromptTimer.Start()
+        # 启动时先静默补齐 AppContainer 目录权限（幂等：已有就跳过，通常只多一次 Get-Acl）。
+        # 覆盖「手动拷包 / 从别处迁移 / 旧版本升上来」这些没走面板部署的路径 ——
+        # 缺这两个 SID 时，Edge 攒满 100 次启动后会启用强沙箱，renderer 读不到程序文件，
+        # 表现为窗口能开但所有页面全白、设置页也进不去。
+        # 95% 场景目录 Owner 就是当前用户，普通权限即可补上，不会弹任何框；
+        # 补不上的情况交给 startupPromptTimer（300ms 后）弹窗，Add_Shown 里不能弹模态框。
+        if (-not $RunOnce) { [void](Repair-EdgeAppContainerAcl $edgeRoot) }
         # 上次被强杀可能留下 edge-update-* 半成品，超过 30 分钟没动的一律清掉
         Get-ChildItem $env:TEMP -Directory -Filter 'edge-update-*' -ErrorAction SilentlyContinue |
             Where-Object { $_.LastWriteTime -lt (Get-Date).AddMinutes(-30) } |

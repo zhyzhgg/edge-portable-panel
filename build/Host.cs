@@ -10,9 +10,9 @@ using System.Text.RegularExpressions;
 [assembly: AssemblyDescription("便携 Edge 一体化运维面板")]
 [assembly: AssemblyProduct("便携 Edge 面板")]
 [assembly: AssemblyCompany("EdgePanel")]
-[assembly: AssemblyVersion("1.4.1.0")]
-[assembly: AssemblyFileVersion("1.4.1.303")]
-[assembly: AssemblyInformationalVersion("v1.4.1")]
+[assembly: AssemblyVersion("1.4.2.0")]
+[assembly: AssemblyFileVersion("1.4.2.309")]
+[assembly: AssemblyInformationalVersion("v1.4.2")]
 
 // 便携 Edge 面板 —— 单文件 EXE 宿主
 // 职责：把内嵌资源解包到「用户目录」%LOCALAPPDATA%\\EdgePanel\\<版本>\\（包根保持干净，不释放 .runtime），
@@ -21,8 +21,8 @@ using System.Text.RegularExpressions;
 internal static class Host
 {
     // 资源版本号：内容变了就改这里，触发重新解包
-    private const string ResourceVersion = "2026-11-21.303";   // 解包目录键（每次改内容 -Bump）
-    private const string ProductVersion = "v1.4.1";   // 必须与 EdgePanel.ps1 的 $script:panelVersion 一致（build.ps1 自动校验）
+    private const string ResourceVersion = "2026-11-21.309";   // 解包目录键（每次改内容 -Bump）
+    private const string ProductVersion = "v1.4.2";   // 必须与 EdgePanel.ps1 的 $script:panelVersion 一致（build.ps1 自动校验）
     private const string FallbackFolderName = "EdgePanel";
 
     // 本次运行实际使用的运行时根目录（logs/cache 都挂在它下面）

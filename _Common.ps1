@@ -167,12 +167,28 @@ function Find-PortableEdgeDirs([string]$lastSaved = '') {
     }
     return @($found)
 }
+function Test-EdgeAclApplicable([string]$dir) {
+    <#  这个目录到底需不需要 AppContainer ACL：
+        ① 目录不存在（全新部署前）→ 不需要，返回 $false
+        ② 非 NTFS 分区（exFAT/FAT32 U 盘）不支持 ACL → 不需要，返回 $false
+        返回 $true 才表示"该目录存在且支持 ACL，应当检查"。 #>
+    if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { return $false }
+    try {
+        $root = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetFullPath($dir))
+        if (-not $root) { return $true }
+        $di = New-Object System.IO.DriveInfo($root)
+        if ($di.DriveFormat -and $di.DriveFormat -ne 'NTFS') { return $false }
+        return $true
+    } catch { return $true }   # 盘符判断不出来时不拦着，走正常检查
+}
+
 function Test-EdgeAppContainerAcl([string]$dir) {
     <#  便携版 Edge 若装在非 Program Files 目录，Windows 不会给该目录授予 AppContainer 的
         两个包 SID（S-1-15-2-1 / S-1-15-2-2）读执行权限。Edge 攒满 100 次启动后正式启用
         RendererAppContainer 强沙箱，此时 renderer 读不到目录内 DLL，一个渲染进程都起不来
-        （窗口能开、所有页面空白，含 edge://settings）。本函数只做只读检查。 #>
-    if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { return $false }
+        （窗口能开、所有页面空白，含 edge://settings）。本函数只做只读检查。
+        注意：目录不存在 / 非 NTFS 时返回 $true —— 语义是"无需处理"，不是"检查失败"。 #>
+    if (-not (Test-EdgeAclApplicable $dir)) { return $true }
     try {
         $acl = Get-Acl -LiteralPath $dir
         $ids = @($acl.Access | ForEach-Object { [string]$_.IdentityReference })
@@ -183,11 +199,11 @@ function Test-EdgeAppContainerAcl([string]$dir) {
 }
 
 function Repair-EdgeAppContainerAcl([string]$dir) {
-    <#  幂等补齐上面那两个 SID 的 (OI)(CI)(RX)。便携包目录的 Owner 是当前用户，
-        普通权限即可改 ACL，不需要 UAC。返回 $true 表示最终两个 SID 都在。
+    <#  幂等补齐上面那两个 SID 的 (OI)(CI)(RX)。便携包目录的 Owner 通常是当前用户，
+        普通权限即可改 ACL，不需要 UAC。返回 $true 表示最终没问题（含"本就不需要"）。
         失败不抛异常 —— 由调用方决定怎么提示，绝不静默改写其它配置。 #>
     if (Test-EdgeAppContainerAcl $dir) { return $true }
-    if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { return $false }
+    if (-not (Test-EdgeAclApplicable $dir)) { return $true }   # 目录不存在/非 NTFS：无需处理
     try {
         $null = & icacls.exe $dir /grant '*S-1-15-2-1:(OI)(CI)(RX)' '*S-1-15-2-2:(OI)(CI)(RX)' 2>&1
         if ($LASTEXITCODE -ne 0) { return $false }
